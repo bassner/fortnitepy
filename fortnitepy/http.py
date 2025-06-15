@@ -518,6 +518,7 @@ class HTTPClient:
                 graphql = (graphql,)
             kwargs['json'] = [gql_query.as_multiple_payload()
                               for gql_query in graphql]
+            print(kwargs['json'])
 
         kwargs['headers'] = headers
 
@@ -1049,7 +1050,7 @@ class HTTPClient:
 
     async def account_get_exchange_data(self, auth: str,
                                         **kwargs: Any) -> dict:
-        r = AccountPublicService('/account/api/oauth/exchange')
+        r = AccountPublicService('/account/api/oauth/exchange?consumingClientId=67303a52383c46028306202f75a1c546',)
         return await self.get(r, auth=auth, **kwargs)
 
     async def account_oauth_grant(self, **kwargs: Any) -> dict:
@@ -1210,22 +1211,25 @@ class HTTPClient:
     async def account_graphql_get_clients_external_auths(self,
                                                          **kwargs: Any
                                                          ) -> dict:
-        return await self.graphql_request(GraphQLRequest(
-            query="""
-            query AccountQuery {
-                Account {
-                    myAccount {
-                        externalAuths {
-                            type
-                            accountId
-                            externalAuthId
-                            externalDisplayName
+        try:
+            return await self.graphql_request(GraphQLRequest(
+                query="""
+                query AccountQuery {
+                    Account {
+                        myAccount {
+                            externalAuths {
+                                type
+                                accountId
+                                externalAuthId
+                                externalDisplayName
+                            }
                         }
                     }
                 }
-            }
-            """
-        ), **kwargs)
+                """
+            ), **kwargs)
+        except Exception:
+            return {}
 
     async def account_get_multiple_by_user_id_with_fallback(self,
                                                             user_ids: Iterable[str],  # noqa
