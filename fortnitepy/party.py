@@ -598,7 +598,7 @@ class PartyMemberMeta(MetaBase):
             'Default:HomeBaseVersion_U': '1',
             'Default:FrontendEmote_j': json.dumps({
                 'FrontendEmote': {
-                    'emoteItemDef': 'None',
+                    'pickable': 'None',
                     'emoteEKey': '',
                     'emoteSection': -1,
                     'multipurposeEmoteData': -1,
@@ -907,7 +907,7 @@ class PartyMemberMeta(MetaBase):
     @property
     def emote(self) -> str:
         base = self.get_prop('Default:FrontendEmote_j')
-        return base['FrontendEmote'].get('emoteItemDef', 'None')
+        return base['FrontendEmote'].get('pickable', 'None')
 
     @property
     def banner(self) -> Tuple[str, str, int]:
@@ -1046,7 +1046,7 @@ class PartyMemberMeta(MetaBase):
         data = (self.get_prop('Default:FrontendEmote_j'))['FrontendEmote']
 
         if emote is not None:
-            data['emoteItemDef'] = self.maybesub(emote)
+            data['pickable'] = self.maybesub(emote)
         if emote_ekey is not None:
             data['emoteEKey'] = emote_ekey
         if section is not None:
