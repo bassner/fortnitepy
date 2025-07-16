@@ -1332,7 +1332,7 @@ class Client:
                 except AttributeError:
                     pass
 
-        res = await self.http.account_graphql_get_by_display_name(display_name)
+        res = await self.http.account_get_by_display_name(display_name)
         accounts = res['account']
         if len(accounts) == 0:
             return None
@@ -1382,7 +1382,7 @@ class Client:
         List[:class:`User`]
             A list containing all payloads found for this user.
         """
-        res = await self.http.account_graphql_get_by_display_name(display_name)
+        res = await self.http.account_get_by_display_name(display_name)
         if raw:
             return res['account']
 
@@ -1490,7 +1490,7 @@ class Client:
                     except AttributeError:
                         pass
 
-            task = self.http.account_graphql_get_by_display_name(elem)
+            task = self.http.account_get_by_display_name(elem)
             tasks.append(task)
 
         for elem in users:
@@ -1527,7 +1527,7 @@ class Client:
         chunk_tasks = []
         chunks = (new[i:i + 100] for i in range(0, len(new), 100))
         for chunk in chunks:
-            task = self.http.account_get_multiple_by_user_id_with_fallback(chunk)  # noqa
+            task = self.http.account_get_multiple_by_user_id(chunk)  # noqa
             chunk_tasks.append(task)
 
         if len(chunk_tasks) > 0:
@@ -1732,7 +1732,7 @@ class Client:
 
         users = {}
         tasks = [
-            self.http.account_graphql_get_multiple_by_user_id(
+            self.http.account_get_multiple_by_user_id(
                 chunk,
                 priority=priority
             )

@@ -194,7 +194,7 @@ class UserBase:
         HTTPException
             An error occured while requesting.
         """
-        result = await self.client.http.account_get_multiple_by_user_id_with_fallback(  # noqa
+        result = await self.client.http.account_get_multiple_by_user_id(  # noqa
             (self.id,),
         )
         data = result['accounts'][0]
