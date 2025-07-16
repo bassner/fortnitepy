@@ -1000,8 +1000,8 @@ class Client:
             ),
         ]
 
-        data, ext_data, extra_ext_data, *_ = await asyncio.gather(*tasks)
-        data['externalAuths'] = ext_data['myAccount']['externalAuths'] or []
+        data, extra_ext_data, *_ = await asyncio.gather(*tasks)
+        # data['externalAuths'] = ext_data['myAccount']['externalAuths'] or []
         data['extraExternalAuths'] = extra_ext_data
         self.user = ClientUser(self, data)
 
