@@ -1237,15 +1237,15 @@ class HTTPClient:
         """This method exists so that we can circumvent graphql 405's by
         falling back to the regular account service lookup endpoint.
         If a 405 is detected, it will use the regular account service
-        endpoint for two minutes.
+        endpoint for ten minutes.
         """
 
         if (self.last_account_fetch_405 is None
-           or time.time() - self.last_account_fetch_405 > 2*60):
+           or time.time() - self.last_account_fetch_405 > 10*60):
             try:
                 return await self.account_graphql_get_multiple_by_user_id(user_ids, **kwargs)  # noqa
             except HTTPException as exc:
-                if not self.client.fallback_on_user_lookup_405 or exc.status != 405:  # noqa
+                if not self.client.fallback_on_user_lookup_405 or (exc.status != 405 or exc.status != 404):  # noqa
                     raise
 
                 self.last_account_fetch_405 = time.time()
