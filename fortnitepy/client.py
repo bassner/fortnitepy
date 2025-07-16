@@ -991,9 +991,9 @@ class Client:
                 self.auth.account_id,
                 priority=priority
             ),
-            self.http.account_graphql_get_clients_external_auths(
-                priority=priority
-            ),
+            #self.http.account_graphql_get_clients_external_auths(
+            #    priority=priority
+            #),
             self.http.account_get_external_auths_by_id(
                 self.auth.account_id,
                 priority=priority
