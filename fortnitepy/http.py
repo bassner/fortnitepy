@@ -1050,7 +1050,7 @@ class HTTPClient:
 
     async def account_get_exchange_data(self, auth: str,
                                         **kwargs: Any) -> dict:
-        r = AccountPublicService('/account/api/oauth/exchange?consumingClientId=67303a52383c46028306202f75a1c546',)
+        r = AccountPublicService('/account/api/oauth/exchange',)
         return await self.get(r, auth=auth, **kwargs)
 
     async def account_oauth_grant(self, **kwargs: Any) -> dict:
