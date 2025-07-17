@@ -1333,7 +1333,7 @@ class Client:
                     pass
 
         res = await self.http.account_get_by_display_name(display_name)
-        accounts = res['account']
+        accounts = res
         if len(accounts) == 0:
             return None
 
@@ -1384,9 +1384,9 @@ class Client:
         """
         res = await self.http.account_get_by_display_name(display_name)
         if raw:
-            return res['account']
+            return res
 
-        return [User(self, account) for account in res['account']]
+        return [User(self, account) for account in res]
 
     fetch_profiles_by_display_name = fetch_users_by_display_name
 
@@ -1513,7 +1513,7 @@ class Client:
         if len(tasks) > 0:
             pfs = await asyncio.gather(*tasks)
             for p_data in pfs:
-                accounts = p_data['account']
+                accounts = p_data
                 for account_data in accounts:
                     if account_data['displayName'] is not None:
                         new.append(account_data['id'])
