@@ -197,7 +197,7 @@ class UserBase:
         result = await self.client.http.account_get_multiple_by_user_id(  # noqa
             (self.id,),
         )
-        data = result['accounts'][0]
+        data = result[0]
 
         self._update(data)
 

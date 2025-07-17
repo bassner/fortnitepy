@@ -1533,8 +1533,8 @@ class Client:
         if len(chunk_tasks) > 0:
             d = await asyncio.gather(*chunk_tasks)
             for results in d:
-                if 'accounts' in results:
-                    results = results['accounts']
+                if not results or len(results) == 0:
+                    continue
 
                 for result in results:
                     if raw:
@@ -1744,7 +1744,7 @@ class Client:
             done = []
 
         for results in done:
-            for user in results['accounts']:
+            for user in results:
                 users[user['id']] = user
 
         for friend in raw_friends:

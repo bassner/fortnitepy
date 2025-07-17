@@ -3456,7 +3456,7 @@ class PartyBase:
                 user_ids,
                 priority=priority
             )
-            for account_data in data['accounts']:
+            for account_data in data:
                 raw_users[account_data['id']] = account_data
 
         result = []
