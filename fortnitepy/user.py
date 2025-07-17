@@ -65,10 +65,10 @@ class ExternalAuth:
 
     def __init__(self, client: 'Client', data: dict) -> None:
         self.client = client
-        self.type = data['type']
-        self.id = data['accountId']
-        self.external_id = data['externalAuthId']
-        self.external_display_name = data['externalDisplayName']
+        self.type = data.get('type', '')
+        self.id = data.get('accountId', '')
+        self.external_id = data.get('externalAuthId', '')
+        self.external_display_name = data.get('externalDisplayName', '')
 
     def _update_extra_info(self, data: dict) -> None:
         to_be_removed = ('type', 'accountId', 'externalAuthId',
