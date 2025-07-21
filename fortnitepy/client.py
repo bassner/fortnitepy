@@ -1512,17 +1512,15 @@ class Client:
 
         if len(tasks) > 0:
             pfs = await asyncio.gather(*tasks)
-            for p_data in pfs:
-                accounts = p_data
-                for account_data in accounts:
-                    if account_data['displayName'] is not None:
+            for account_data in pfs:
+                if account_data['displayName'] is not None:
+                    new.append(account_data['id'])
+                    break
+            else:
+                for account_data in pfs:
+                    if account_data['displayName'] is None:
                         new.append(account_data['id'])
                         break
-                else:
-                    for account_data in accounts:
-                        if account_data['displayName'] is None:
-                            new.append(account_data['id'])
-                            break
 
         chunk_tasks = []
         chunks = (new[i:i + 100] for i in range(0, len(new), 100))
