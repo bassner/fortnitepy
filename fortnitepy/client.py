@@ -1511,14 +1511,28 @@ class Client:
             return []
 
         if len(tasks) > 0:
-            pfs = await asyncio.gather(*tasks)
+            pfs = await asyncio.gather(*tasks, return_exceptions=True)
             for account_data in pfs:
-                if account_data['displayName'] is not None:
+                if isinstance(account_data, HTTPException):
+                    # Skip users that are not found instead of breaking the entire function
+                    if account_data.message_code == 'errors.com.epicgames.account.account_not_found':
+                        continue
+                    else:
+                        # Re-raise other HTTP exceptions
+                        raise account_data
+                elif account_data['displayName'] is not None:
                     new.append(account_data['id'])
                     break
             else:
                 for account_data in pfs:
-                    if account_data['displayName'] is None:
+                    if isinstance(account_data, HTTPException):
+                        # Skip users that are not found
+                        if account_data.message_code == 'errors.com.epicgames.account.account_not_found':
+                            continue
+                        else:
+                            # Re-raise other HTTP exceptions
+                            raise account_data
+                    elif account_data['displayName'] is None:
                         new.append(account_data['id'])
                         break
 
@@ -1529,9 +1543,16 @@ class Client:
             chunk_tasks.append(task)
 
         if len(chunk_tasks) > 0:
-            d = await asyncio.gather(*chunk_tasks)
+            d = await asyncio.gather(*chunk_tasks, return_exceptions=True)
             for results in d:
-                if not results or len(results) == 0:
+                if isinstance(results, HTTPException):
+                    # Skip chunks where users are not found instead of breaking the entire function
+                    if results.message_code == 'errors.com.epicgames.account.account_not_found':
+                        continue
+                    else:
+                        # Re-raise other HTTP exceptions
+                        raise results
+                elif not results or len(results) == 0:
                     continue
 
                 for result in results:
