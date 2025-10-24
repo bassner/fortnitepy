@@ -1049,9 +1049,23 @@ class HTTPClient:
     ###################################
 
     async def account_get_exchange_data(self, auth: str,
+                                        consuming_client_id: Optional[str] = None,
                                         **kwargs: Any) -> dict:
-        r = AccountPublicService('/account/api/oauth/exchange?consumingClientId=67303a52383c46028306202f75a1c546',)
-        return await self.get(r, auth=auth, **kwargs)
+        params = kwargs.pop('params', None)
+
+        if params is None:
+            params = {}
+        else:
+            params = dict(params)
+
+        if consuming_client_id is None:
+            consuming_client_id = self.client.auth.get_consumer_client_id()
+
+        if consuming_client_id is not None:
+            params.setdefault('consumingClientId', consuming_client_id)
+
+        r = AccountPublicService('/account/api/oauth/exchange')
+        return await self.get(r, auth=auth, params=params, **kwargs)
 
     async def account_oauth_grant(self, **kwargs: Any) -> dict:
         r = AccountPublicService('/account/api/oauth/token')

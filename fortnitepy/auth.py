@@ -29,6 +29,8 @@ import asyncio
 import logging
 import uuid
 import time
+import base64
+import binascii
 from random import randint
 
 from aioconsole import ainput
@@ -45,6 +47,49 @@ _prompt_lock = asyncio.Lock()
 
 
 class Auth:
+    @staticmethod
+    def _extract_client_id_from_token(token: Optional[str]) -> Optional[str]:
+        if not token:
+            return None
+
+        trimmed = token.strip()
+        if not trimmed:
+            return None
+
+        padded = trimmed + '=' * (-len(trimmed) % 4)
+
+        try:
+            decoded = base64.b64decode(padded).decode('utf-8')
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            return None
+
+        client_id, _, _ = decoded.partition(':')
+        return client_id or None
+
+    def get_consumer_client_id(self,
+                               consuming_token: Optional[str] = None) -> Optional[str]:
+        tokens_to_try = []
+        if consuming_token:
+            tokens_to_try.append(consuming_token)
+        else:
+            tokens_to_try.extend([
+                getattr(self, 'fortnite_token', None),
+                getattr(self, 'ios_token', None)
+            ])
+
+        for token in tokens_to_try:
+            client_id = self._extract_client_id_from_token(token)
+            if client_id:
+                return client_id
+
+        fallback = getattr(self, 'client_id', None)
+        if fallback:
+            return fallback
+
+        log.warning('Unable to derive consuming client id; omitting parameter. auth_class=%s',
+                    self.__class__.__name__)
+        return None
+
     def __init__(self, **kwargs: Any) -> None:
         self.ios_token = kwargs.get('ios_token', 'MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=')  # noqa
         self.fortnite_token = kwargs.get('fortnite_token', 'ZWM2ODRiOGM2ODdmNDc5ZmFkZWEzY2IyYWQ4M2Y1YzY6ZTFmMzFjMjExZjI4NDEzMTg2MjYyZDM3YTEzZmM4NGQ=')  # noqa
@@ -162,9 +207,14 @@ class Auth:
 
     async def get_exchange_code(self, *,
                                 auth='IOS_ACCESS_TOKEN',
+                                consuming_token: Optional[str] = None,
                                 priority: int = 0) -> str:
+        consuming_client_id = self.get_consumer_client_id(
+            consuming_token=consuming_token
+        )
         data = await self.client.http.account_get_exchange_data(
             auth=auth,
+            consuming_client_id=consuming_client_id,
             priority=priority
         )
         return data['code']
@@ -468,7 +518,7 @@ class EmailAndPasswordAuth(Auth):
         if self.client.kill_other_sessions:
             await self.kill_other_sessions()
 
-        code = await self.get_exchange_code()
+        code = await self.get_exchange_code(consuming_token=self.fortnite_token)
         data = await self.exchange_code_for_session(
             self.fortnite_token,
             code
@@ -562,7 +612,7 @@ class ExchangeCodeAuth(Auth):
         if self.client.kill_other_sessions:
             await self.kill_other_sessions()
 
-        code = await self.get_exchange_code()
+        code = await self.get_exchange_code(consuming_token=self.fortnite_token)
         data = await self.exchange_code_for_session(
             self.fortnite_token,
             code
@@ -726,7 +776,7 @@ class DeviceAuth(Auth):
         if self.client.kill_other_sessions:
             await self.kill_other_sessions(priority=priority)
 
-        code = await self.get_exchange_code(priority=priority)
+        code = await self.get_exchange_code(priority=priority, consuming_token=self.fortnite_token)
         data = await self.exchange_code_for_session(
             self.fortnite_token,
             code,
@@ -776,7 +826,7 @@ class RefreshTokenAuth(Auth):
         data = await self.ios_authenticate(priority=priority)
         self._update_ios_data(data)
 
-        code = await self.get_exchange_code(priority=priority)
+        code = await self.get_exchange_code(priority=priority, consuming_token=self.fortnite_token)
         data = await self.exchange_code_for_session(
             self.fortnite_token,
             code,
@@ -990,7 +1040,7 @@ class AdvancedAuth(Auth):
         data = await auth.ios_authenticate(priority=priority)
         self._update_ios_data(data)
 
-        code = await auth.get_exchange_code(priority=priority)
+        code = await auth.get_exchange_code(priority=priority, consuming_token=auth.fortnite_token)
         return await auth.exchange_code_for_session(
             auth.fortnite_token,
             code,
@@ -1114,7 +1164,7 @@ class AdvancedAuth(Auth):
         if self.client.kill_other_sessions:
             await self.kill_other_sessions()
 
-        code = await self.get_exchange_code()
+        code = await self.get_exchange_code(consuming_token=self.fortnite_token)
         data = await self.exchange_code_for_session(
             self.fortnite_token,
             code
@@ -1134,7 +1184,7 @@ class AdvancedAuth(Auth):
         if self.client.kill_other_sessions:
             await self.kill_other_sessions(priority=priority)
 
-        code = await self.get_exchange_code(priority=priority)
+        code = await self.get_exchange_code(priority=priority, consuming_token=self.fortnite_token)
         data = await self.exchange_code_for_session(
             self.fortnite_token,
             code,
