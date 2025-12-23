@@ -789,10 +789,10 @@ class PartyMemberMeta(MetaBase):
                         "island": json.dumps({
                             "LinkId": "",
                             "Session": {
-                                "Id": "",
-                                "JoinInfo": {
-                                    "Joinability": "CanNotBeJoinedOrWatched",
-                                    "SessionKey": ""
+                                "iD": "",
+                                "joinInfo": {
+                                    "joinability": "CanNotBeJoinedOrWatched",
+                                    "sessionKey": ""
                                 }
                             },
                             "MatchmakingSettingsV1": {
@@ -805,21 +805,21 @@ class PartyMemberMeta(MetaBase):
                                 "productModes": [],
                                 "privacy": "Fill",
                                 "regionId": ""
-                            },
-                            "bUsingGracefulUpgrade": True
+                            }
                         }),
                         "timestamp": 0,
-                        "matchmakingId": "00000000-0000-0000-0000-000000000000"
+                        "bUsingGracefulUpgrade": True,
+                        "matchmakingId": ""
                     },
                     "bIsEligible": True,
                     "islandSelection": {
                         "island": json.dumps({
                             "LinkId": "playlist_defaultsquad",
                             "Session": {
-                                "Id": "",
-                                "JoinInfo": {
-                                    "Joinability": "CanNotBeJoinedOrWatched",
-                                    "SessionKey": ""
+                                "iD": "",
+                                "joinInfo": {
+                                    "joinability": "CanNotBeJoinedOrWatched",
+                                    "sessionKey": ""
                                 }
                             },
                             "MatchmakingSettingsV1": {
@@ -832,11 +832,11 @@ class PartyMemberMeta(MetaBase):
                                 "productModes": [],
                                 "privacy": "NoFill",
                                 "regionId": "EU"
-                            },
-                            "bUsingGracefulUpgrade": True
+                            }
                         }),
                         "timestamp": 0,
-                        "matchmakingId": "00000000-0000-0000-0000-000000000000"
+                        "bUsingGracefulUpgrade": True,
+                        "matchmakingId": ""
                     },
                     "worldSessionId": "",
                     "travelId": "",
@@ -1265,6 +1265,8 @@ class PartyMemberMeta(MetaBase):
 
         if playlist:
             island_data['LinkId'] = playlist
+        if version:
+            data['playlistVersion'] = version
 
         data['islandSelection']['island'] = json.dumps(island_data)
         data['islandSelection']['timestamp'] = int(datetime.datetime.now(
