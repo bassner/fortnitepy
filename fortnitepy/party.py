@@ -786,57 +786,57 @@ class PartyMemberMeta(MetaBase):
             "Default:MatchmakingInfo_j": json.dumps({
                 "MatchmakingInfo": {
                     "currentIsland": {
-                        "island": {
-                            "linkId": {
-                                "mnemonic": "",
-                                "version": -1
-                            },
-                            "session": {
-                                "iD": "",
-                                "joinInfo": {
-                                    "joinability": "CanNotBeJoinedOrWatched",
-                                    "sessionKey": ""
+                        "island": json.dumps({
+                            "LinkId": "",
+                            "Session": {
+                                "Id": "",
+                                "JoinInfo": {
+                                    "Joinability": "CanNotBeJoinedOrWatched",
+                                    "SessionKey": ""
                                 }
                             },
-                            "world": {
-                                "iD": "",
-                                "ownerId": "INVALID",
-                                "name": "",
-                                "bIsJoinable": False
+                            "MatchmakingSettingsV1": {
+                                "world": {
+                                    "iD": "",
+                                    "ownerId": "INVALID",
+                                    "name": "",
+                                    "bIsJoinable": False
+                                },
+                                "productModes": [],
+                                "privacy": "Fill",
+                                "regionId": ""
                             },
-                            "productModes": [],
-                            "privacy": "Undefined",
-                            "regionId": "EU"
-                        },
+                            "bUsingGracefulUpgrade": True
+                        }),
                         "timestamp": 0,
-                        "matchmakingId": ""
+                        "matchmakingId": "00000000-0000-0000-0000-000000000000"
                     },
                     "bIsEligible": True,
                     "islandSelection": {
-                        "island": {
-                            "linkId": {
-                                "mnemonic": "playlist_defaultsquad",
-                                "version": -1
-                            },
-                            "session": {
-                                "iD": "",
-                                "joinInfo": {
-                                    "joinability": "CanNotBeJoinedOrWatched",
-                                    "sessionKey": ""
+                        "island": json.dumps({
+                            "LinkId": "playlist_defaultsquad",
+                            "Session": {
+                                "Id": "",
+                                "JoinInfo": {
+                                    "Joinability": "CanNotBeJoinedOrWatched",
+                                    "SessionKey": ""
                                 }
                             },
-                            "world": {
-                                "iD": "",
-                                "ownerId": "INVALID",
-                                "name": "",
-                                "bIsJoinable": False
+                            "MatchmakingSettingsV1": {
+                                "world": {
+                                    "iD": "",
+                                    "ownerId": "INVALID",
+                                    "name": "",
+                                    "bIsJoinable": False
+                                },
+                                "productModes": [],
+                                "privacy": "NoFill",
+                                "regionId": "EU"
                             },
-                            "productModes": [],
-                            "privacy": "Private",
-                            "regionId": "EU"
-                        },
+                            "bUsingGracefulUpgrade": True
+                        }),
                         "timestamp": 0,
-                        "matchmakingId": ""
+                        "matchmakingId": "00000000-0000-0000-0000-000000000000"
                     },
                     "worldSessionId": "",
                     "travelId": "",
@@ -1261,12 +1261,15 @@ class PartyMemberMeta(MetaBase):
         key = 'Default:MatchmakingInfo_j'
         data = (self.get_prop('Default:MatchmakingInfo_j'))['MatchmakingInfo']
 
-        if playlist:
-            data['islandSelection']['island']['linkId']['mnemonic'] = playlist
-        if version:
-            data['islandSelection']['island']['linkId']['version'] = version
+        island_data = json.loads(data['islandSelection']['island'])
 
-        data['islandSelection']['timestamp'] = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+        if playlist:
+            island_data['LinkId'] = playlist
+
+        data['islandSelection']['island'] = json.dumps(island_data)
+        data['islandSelection']['timestamp'] = int(datetime.datetime.now(
+            datetime.timezone.utc
+        ).timestamp())
 
         final = {'MatchmakingInfo': data}
         return {key: self.set_prop(key, final)}
@@ -1275,8 +1278,13 @@ class PartyMemberMeta(MetaBase):
         key = 'Default:MatchmakingInfo_j'
         data = (self.get_prop('Default:MatchmakingInfo_j'))['MatchmakingInfo']
 
-        data['islandSelection']['region'] = region.value
-        data['islandSelection']['timestamp'] = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+        island_data = json.loads(data['islandSelection']['island'])
+        island_data['MatchmakingSettingsV1']['regionId'] = region.value
+
+        data['islandSelection']['island'] = json.dumps(island_data)
+        data['islandSelection']['timestamp'] = int(datetime.datetime.now(
+            datetime.timezone.utc
+        ).timestamp())
 
         final = {'MatchmakingInfo': data}
         return {key: self.set_prop(key, final)}
@@ -1285,8 +1293,13 @@ class PartyMemberMeta(MetaBase):
         key = 'Default:MatchmakingInfo_j'
         data = (self.get_prop('Default:MatchmakingInfo_j'))['MatchmakingInfo']
 
-        data['islandSelection']['privacy'] = 'Fill' if fill else 'NoFill'
-        data['islandSelection']['timestamp'] = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+        island_data = json.loads(data['islandSelection']['island'])
+        island_data['MatchmakingSettingsV1']['privacy'] = 'Fill' if fill else 'NoFill'
+
+        data['islandSelection']['island'] = json.dumps(island_data)
+        data['islandSelection']['timestamp'] = int(datetime.datetime.now(
+            datetime.timezone.utc
+        ).timestamp())
 
         final = {'MatchmakingInfo': data}
         return {key: self.set_prop(key, final)}
