@@ -458,27 +458,27 @@ class ClientUser(UserBase):
 
     def _update(self, data: dict) -> None:
         super()._update(data)
-        self.name = data['name']
-        self.email = data['email']
-        self.failed_login_attempts = data['failedLoginAttempts']
+        self.name = data.get('name', '')
+        self.email = data.get('email', '')
+        self.failed_login_attempts = data.get('failedLoginAttempts', 0)
         self.last_failed_login = (self.client.from_iso(data['lastFailedLogin'])
                                   if 'lastFailedLogin' in data else None)
         self.last_login = (self.client.from_iso(data['lastLogin'])
                            if 'lastLogin' in data else None)
 
-        n_changes = data['numberOfDisplayNameChanges']
-        self.number_of_display_name_changes = n_changes
-        self.age_group = data['ageGroup']
-        self.headless = data['headless']
-        self.country = data['country']
-        self.last_name = data['lastName']
-        self.preferred_language = data['preferredLanguage']
-        self.can_update_display_name = data['canUpdateDisplayName']
-        self.tfa_enabled = data['tfaEnabled']
-        self.email_verified = data['emailVerified']
-        self.minor_verified = data['minorVerified']
-        self.minor_expected = data['minorExpected']
-        self.minor_status = data['minorStatus']
+        self.number_of_display_name_changes = data.get(
+            'numberOfDisplayNameChanges', 0)
+        self.age_group = data.get('ageGroup', 'UNKNOWN')
+        self.headless = data.get('headless', False)
+        self.country = data.get('country', '')
+        self.last_name = data.get('lastName', '')
+        self.preferred_language = data.get('preferredLanguage', 'en')
+        self.can_update_display_name = data.get('canUpdateDisplayName', False)
+        self.tfa_enabled = data.get('tfaEnabled', False)
+        self.email_verified = data.get('emailVerified', False)
+        self.minor_verified = data.get('minorVerified', False)
+        self.minor_expected = data.get('minorExpected', False)
+        self.minor_status = data.get('minorStatus', 'UNKNOWN')
 
 
 class User(UserBase):
