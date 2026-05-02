@@ -223,8 +223,8 @@ class Presence:
     client: :class:`Client`
         The client.
     available: :class:`bool`
-        The availability of this presence. ``True`` if presence is available,
-        ``False`` if user went unavailable.
+        Whether or not the user is online. ``True`` if the friend **is** or
+        **went** online, ``False`` if the friend **went** offline.
     away: :class:`AwayStatus`
         The users away status.
     friend: :class:`Friend`
@@ -284,13 +284,13 @@ class Presence:
         The playercount of the friend's server.
     """
 
-    __slots__ = ('client', 'available', 'away', 'friend', 'platform',
+    __slots__ = ('data', 'client', 'available', 'away', 'friend', 'platform',
                  'received_at', 'status', 'in_kairos', 'playing', 'joinable',
                  'has_voice_support', 'session_id',
                  'has_properties', 'avatar', 'homebase_rating', 'lfg',
                  'sub_game', 'in_unjoinable_match', 'playlist', 'party_size',
                  'max_party_size', 'game_session_join_key',
-                 'server_player_count', 'gameplay_stats', 'party')
+                 'server_player_count', 'gameplay_stats', 'party', 'social_status')
 
     def __init__(self, client: 'Client',
                  from_id: str,
@@ -298,6 +298,7 @@ class Presence:
                  available: bool,
                  away: bool,
                  data: dict) -> None:
+        self.data = data
         self.client = client
         self.available = available
         self.away = away
@@ -320,11 +321,24 @@ class Presence:
         # The only expections are avatar and party which could have
         # values as long as in_kairos is True.
 
-        kairos_p = raw_properties.get('KairosProfile_s', {})
-        if kairos_p:
-            kairos_p = json.loads(kairos_p)
+        # Pat: For some reason this property is now used for game play stats (numKills etc)
+        # Using an empty object for now
+        # kairos_p = raw_properties.get('KairosProfile_s', {})
+        # if kairos_p:
+        #    kairos_p = json.loads(kairos_p)
+        # else:
+        #    kairos_p = raw_properties.get('KairosProfile_j', {})
+        kairos_p = {}
+
+        social_status = raw_properties.get('SocialStatus_j')
+        if social_status is None:
+            self.social_status = None
+        elif isinstance(social_status, str):
+            self.social_status = json.loads(social_status)
+        elif isinstance(social_status, dict):
+            self.social_status = social_status
         else:
-            kairos_p = raw_properties.get('KairosProfile_j', {})
+            self.social_status = None
 
         background = kairos_p.get('avatarBackground')
         if background and not isinstance(background, list):
@@ -375,7 +389,7 @@ class Presence:
         if self.server_player_count is not None:
             self.server_player_count = int(self.server_player_count)
 
-        if 'FortGameplayStats_j' in raw_properties.keys():
+        if 'FortGameplayStats_j' in raw_properties:
             self.gameplay_stats = PresenceGameplayStats(
                 self.friend,
                 raw_properties['FortGameplayStats_j'],
@@ -385,7 +399,7 @@ class Presence:
             self.gameplay_stats = None
 
         key = None
-        for k in raw_properties.keys():
+        for k in raw_properties:
             if re.search(r'party\.joininfodata\.\d+_j', k) is not None:
                 key = k
 

@@ -23,12 +23,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-
+import datetime
 import logging
 
 from aioxmpp import JID
 from typing import TYPE_CHECKING, Any, List, Optional
 from .enums import UserSearchPlatform, UserSearchMatchType, StatsCollectionType
+from .rankedprogress import RankedProgress
 from .typedefs import DatetimeOrTimestamp
 from .errors import Forbidden
 
@@ -64,10 +65,10 @@ class ExternalAuth:
 
     def __init__(self, client: 'Client', data: dict) -> None:
         self.client = client
-        self.type = data['type']
-        self.id = data['accountId']
-        self.external_id = data['externalAuthId']
-        self.external_display_name = data['externalDisplayName']
+        self.type = data.get('type', '')
+        self.id = data.get('accountId', '')
+        self.external_id = data.get('externalAuthId', '')
+        self.external_display_name = data.get('externalDisplayName', '')
 
     def _update_extra_info(self, data: dict) -> None:
         to_be_removed = ('type', 'accountId', 'externalAuthId',
@@ -193,10 +194,10 @@ class UserBase:
         HTTPException
             An error occured while requesting.
         """
-        result = await self.client.http.account_graphql_get_multiple_by_user_id(  # noqa
+        result = await self.client.http.account_get_multiple_by_user_id(  # noqa
             (self.id,),
         )
-        data = result['accounts'][0]
+        data = result[0]
 
         self._update(data)
 
@@ -239,6 +240,10 @@ class UserBase:
             start_time=start_time,
             end_time=end_time
         )
+
+    async def fetch_ranked_progress(self, *,
+                                    ends_after: Optional[datetime.datetime] = None) -> RankedProgress:
+        return await self.client.fetch_ranked_progress(self.id, ends_after=ends_after)
 
     async def fetch_br_stats_collection(self, collection: StatsCollectionType,
                                         start_time: Optional[DatetimeOrTimestamp] = None,  # noqa
@@ -355,7 +360,8 @@ class UserBase:
                      for v in extra_external_auths}
 
         ext_list = []
-        for e in external_auths:
+        iterator = external_auths.values() if isinstance(external_auths, dict) else external_auths  # noqa
+        for e in iterator:
             ext = ExternalAuth(self.client, e)
             ext._update_extra_info(extra_ext.get(ext.type, {}))
             ext_list.append(ext)
@@ -452,27 +458,27 @@ class ClientUser(UserBase):
 
     def _update(self, data: dict) -> None:
         super()._update(data)
-        self.name = data['name']
-        self.email = data['email']
-        self.failed_login_attempts = data['failedLoginAttempts']
+        self.name = data.get('name', '')
+        self.email = data.get('email', '')
+        self.failed_login_attempts = data.get('failedLoginAttempts', 0)
         self.last_failed_login = (self.client.from_iso(data['lastFailedLogin'])
                                   if 'lastFailedLogin' in data else None)
         self.last_login = (self.client.from_iso(data['lastLogin'])
                            if 'lastLogin' in data else None)
 
-        n_changes = data['numberOfDisplayNameChanges']
-        self.number_of_display_name_changes = n_changes
-        self.age_group = data['ageGroup']
-        self.headless = data['headless']
-        self.country = data['country']
-        self.last_name = data['lastName']
-        self.preferred_language = data['preferredLanguage']
-        self.can_update_display_name = data['canUpdateDisplayName']
-        self.tfa_enabled = data['tfaEnabled']
-        self.email_verified = data['emailVerified']
-        self.minor_verified = data['minorVerified']
-        self.minor_expected = data['minorExpected']
-        self.minor_status = data['minorStatus']
+        self.number_of_display_name_changes = data.get(
+            'numberOfDisplayNameChanges', 0)
+        self.age_group = data.get('ageGroup', 'UNKNOWN')
+        self.headless = data.get('headless', False)
+        self.country = data.get('country', '')
+        self.last_name = data.get('lastName', '')
+        self.preferred_language = data.get('preferredLanguage', 'en')
+        self.can_update_display_name = data.get('canUpdateDisplayName', False)
+        self.tfa_enabled = data.get('tfaEnabled', False)
+        self.email_verified = data.get('emailVerified', False)
+        self.minor_verified = data.get('minorVerified', False)
+        self.minor_expected = data.get('minorExpected', False)
+        self.minor_status = data.get('minorStatus', 'UNKNOWN')
 
 
 class User(UserBase):

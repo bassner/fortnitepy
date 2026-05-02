@@ -23,6 +23,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+import datetime
 
 import aiohttp
 import asyncio
@@ -32,7 +33,7 @@ import re
 import time
 import functools
 
-from typing import TYPE_CHECKING, List, Optional, Any, Union, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Optional, Any, Union, Tuple
 from urllib.parse import quote as urllibquote
 
 from .utils import MaybeLock
@@ -114,6 +115,7 @@ class HTTPRetryConfig:
         unrealistically high wait times. Defaults to ``20``. *Only matters
         when ``handle_capacity_throttling`` is ``True``*
     """
+
     def __init__(self, **kwargs):
         self.max_retry_attempts = kwargs.get('max_retry_attempts', 5)
         self.max_wait_time = kwargs.get('max_wait_time', 65)
@@ -315,6 +317,11 @@ class FriendsPublicService(Route):
     AUTH = 'FORTNITE_ACCESS_TOKEN'
 
 
+class FortniteHabaneroService(Route):
+    BASE = 'https://fn-service-habanero-live-public.ogs.live.on.epicgames.com'
+    AUTH = 'FORTNITE_ACCESS_TOKEN'
+
+
 class PartyService(Route):
     BASE = 'https://party-service-prod.ol.epicgames.com'
     AUTH = 'FORTNITE_ACCESS_TOKEN'
@@ -328,6 +335,15 @@ class PresencePublicService(Route):
 class StatsproxyPublicService(Route):
     BASE = 'https://statsproxy-public-service-live.ol.epicgames.com'
     AUTH = 'FORTNITE_ACCESS_TOKEN'
+
+class LinksPublicService(Route):
+    BASE = 'https://links-public-service-live.ol.epicgames.com'
+    AUTH = 'FORTNITE_ACCESS_TOKEN'
+
+
+class ChatService(Route):
+    BASE = 'https://api.epicgames.dev'
+    AUTH = 'EAS_ACCESS_TOKEN'
 
 
 def create_aiohttp_closed_event(session) -> asyncio.Event:
@@ -386,7 +402,8 @@ def create_aiohttp_closed_event(session) -> asyncio.Event:
 class HTTPClient:
     def __init__(self, client: 'Client', *,
                  connector: aiohttp.BaseConnector = None,
-                 retry_config: Optional[HTTPRetryConfig] = None) -> None:
+                 retry_config: Optional[HTTPRetryConfig] = None,
+                 user_agent_override: Optional[str] = None) -> None:
         self.client = client
         self.connector = connector
         self.retry_config = retry_config or HTTPRetryConfig()
@@ -395,17 +412,20 @@ class HTTPClient:
         self.headers = {}
         self.device_id = self.client.auth.device_id
         self._endpoint_events = {}
+        self.user_agent_override = user_agent_override;
 
         # How many refreshes (max_refresh_attempts) to attempt in
         # a time window (refresh_attempt_window) before closing.
         self.max_refresh_attempts = 3
         self.refresh_attempt_window = 20
 
+        self.last_account_fetch_405 = None
+
         self.create_connection()
 
     @staticmethod
     async def json_or_text(response: aiohttp.ClientResponse) -> Union[str,
-                                                                      dict]:
+    dict]:
         text = await response.text(encoding='utf-8')
         if 'application/json' in response.headers.get('content-type', ''):
             return json.loads(text)
@@ -413,7 +433,7 @@ class HTTPClient:
 
     @property
     def user_agent(self) -> str:
-        return 'Fortnite/{0.client.build} {0.client.os}'.format(self)
+        return self.user_agent_override if self.user_agent_override is not None else 'Fortnite/{0.client.build} {0.client.os}'.format(self)
 
     def get_auth(self, auth: str) -> str:
         u_auth = auth.upper()
@@ -426,6 +446,8 @@ class HTTPClient:
             return self.client.auth.ios_authorization
         elif u_auth == 'FORTNITE_ACCESS_TOKEN':
             return self.client.auth.authorization
+        elif u_auth == 'EAS_ACCESS_TOKEN':
+            return self.client.auth.eas_authorization
         return auth
 
     def add_header(self, key: str, val: Any) -> None:
@@ -503,6 +525,7 @@ class HTTPClient:
                 graphql = (graphql,)
             kwargs['json'] = [gql_query.as_multiple_payload()
                               for gql_query in graphql]
+            print(kwargs['json'])
 
         kwargs['headers'] = headers
 
@@ -521,23 +544,31 @@ class HTTPClient:
             if isinstance(data, str):
                 m = GRAPHQL_HTML_ERROR_PATTERN.search(data)
                 error_data = ({
-                    'serviceResponse': '',
-                    'message': 'Unknown reason' if m is None else m.group(1)
-                },)
+                                  'serviceResponse': '',
+                                  'message': 'Unknown reason' if m is None else m.group(1)
+                              },)
                 if m is not None:
                     error_data[0]['serviceResponse'] = json.dumps({
                         'errorStatus': int(m.group(2))
                     })
 
             elif isinstance(data, dict):
-                if data['status'] >= 400:
+                error_data = ({
+                                  'serviceResponse': '',
+                                  'message': 'Unknown reason'
+                              },)
+                if 'status' in data and data['status'] >= 400:
                     message = data['message']
                     error_data = ({
-                        'serviceResponse': json.dumps({
-                            'errorCode': message
-                        }),
-                        'message': message
-                    },)
+                                      'serviceResponse': json.dumps({
+                                          'errorCode': message
+                                      }),
+                                      'message': message
+                                  },)
+                elif 'errors' in data:
+                    error_data = data['errors']
+                    if not isinstance(error_data, list):
+                        error_data = (error_data,)
             else:
                 error_data = None
                 for child_data in data:
@@ -590,7 +621,7 @@ class HTTPClient:
 
         return data
 
-    def get_retry_after(self, exc):
+    def get_retry_after(self, exc: HTTPException) -> Optional[int]:
         retry_after = exc.response.headers.get('Retry-After')
         if retry_after is not None:
             return int(retry_after)
@@ -662,6 +693,12 @@ class HTTPClient:
                     raise
 
                 code = exc.message_code
+                log.warning('Error for {0} {1}. Code: {2}, Status: {3}'.format(  # noqa
+                    method,
+                    url,
+                    code,
+                    exc.status
+                ))
 
                 if graphql:
                     gql_server_error = exc.raw.get('errorStatus') in {500, 502}
@@ -735,6 +772,11 @@ class HTTPClient:
 
                 elif code == 'errors.com.epicgames.common.throttled' or exc.status == 429:  # noqa
                     retry_after = self.get_retry_after(exc)
+                    log.warning('Received throttle for {0} {1}. Retry after: {2}'.format(  # noqa
+                        method,
+                        url,
+                        retry_after
+                    ))
                     if retry_after is not None and cfg.handle_rate_limits:
                         if retry_after <= cfg.max_retry_after:
                             sleep_time = retry_after + 0.5
@@ -751,8 +793,8 @@ class HTTPClient:
                                 sleep_time = backoff
 
                 elif (code == 'errors.com.epicgames.common.concurrent_modification_error'  # noqa
-                        or code == 'errors.com.epicgames.common.server_error'
-                        or gql_server_error):  # noqa
+                      or code == 'errors.com.epicgames.common.server_error'
+                      or gql_server_error):  # noqa
                     sleep_time = 0.5 + (tries - 1) * 2
 
                 if sleep_time > 0:
@@ -760,7 +802,7 @@ class HTTPClient:
                     if cfg.max_wait_time and total_slept > cfg.max_wait_time:
                         raise
 
-                    log.debug('Retrying {0} {1} in {2:.2f}s.'.format(
+                    log.warning('Retrying {0} {1} in {2:.2f}s.'.format(
                         method,
                         url,
                         sleep_time
@@ -808,7 +850,7 @@ class HTTPClient:
         return await self.fn_request('PUT', route, auth, **kwargs)
 
     async def graphql_request(self, graphql: Union[GraphQLRequest,
-                                                   List[GraphQLRequest]],
+    List[GraphQLRequest]],
                               auth: Optional[str] = None,
                               **kwargs: Any) -> Any:
         return await self.fn_request('POST', EpicGamesGraphQL(), auth, graphql,
@@ -997,13 +1039,16 @@ class HTTPClient:
     #           User Search           #
     ###################################
 
-    async def user_search_by_prefix(self, client_id: str, prefix: str, platform: str) -> list:
+    async def user_search_by_prefix(self, client_id: str, prefix: str, platform: str) -> list:  # noqa
         params = {
             'prefix': prefix,
             'platform': platform
         }
 
-        r = UserSearchService('/api/v1/search/{client_id}', client_id=client_id)
+        r = UserSearchService(
+            '/api/v1/search/{client_id}',
+            client_id=client_id
+        )
         return await self.get(r, params=params)
 
     ###################################
@@ -1011,13 +1056,34 @@ class HTTPClient:
     ###################################
 
     async def account_get_exchange_data(self, auth: str,
+                                        consuming_client_id: Optional[str] = None,
                                         **kwargs: Any) -> dict:
+        params = kwargs.pop('params', None)
+
+        if params is None:
+            params = {}
+        else:
+            params = dict(params)
+
+        if consuming_client_id is None:
+            consuming_client_id = self.client.auth.get_consumer_client_id()
+
+        if consuming_client_id is not None:
+            params.setdefault('consumingClientId', consuming_client_id)
+
         r = AccountPublicService('/account/api/oauth/exchange')
-        return await self.get(r, auth=auth, **kwargs)
+        return await self.get(r, auth=auth, params=params, **kwargs)
 
     async def account_oauth_grant(self, **kwargs: Any) -> dict:
         r = AccountPublicService('/account/api/oauth/token')
         return await self.post(r, **kwargs)
+
+    async def account_put_date_of_birth_correction(self, continuation: str, date_of_birth: str, auth: str):
+        r = AccountPublicService(
+            '/account/api/public/corrections/dateOfBirth',
+        )
+
+        return await self.put(r, json={'continuation': continuation, 'dateOfBirth': date_of_birth}, auth=auth)
 
     async def account_generate_device_auth(self, client_id: str) -> dict:
         r = AccountPublicService(
@@ -1103,10 +1169,11 @@ class HTTPClient:
         return await self.get(r, **kwargs)
 
     async def account_get_multiple_by_user_id(self,
-                                              user_ids: List[str]) -> list:
+                                              user_ids: List[str],
+                                              **kwargs: Any) -> list:
         params = [('accountId', user_id) for user_id in user_ids]
         r = AccountPublicService('/account/api/public/account')
-        return await self.get(r, params=params)
+        return await self.get(r, params=params, **kwargs)
 
     async def account_graphql_get_multiple_by_user_id(self,
                                                       user_ids: List[str],
@@ -1165,22 +1232,46 @@ class HTTPClient:
     async def account_graphql_get_clients_external_auths(self,
                                                          **kwargs: Any
                                                          ) -> dict:
-        return await self.graphql_request(GraphQLRequest(
-            query="""
-            query AccountQuery {
-                Account {
-                    myAccount {
-                        externalAuths {
-                            type
-                            accountId
-                            externalAuthId
-                            externalDisplayName
+        try:
+            return await self.graphql_request(GraphQLRequest(
+                query="""
+                query AccountQuery {
+                    Account {
+                        myAccount {
+                            externalAuths {
+                                type
+                                accountId
+                                externalAuthId
+                                externalDisplayName
+                            }
                         }
                     }
                 }
-            }
-            """
-        ), **kwargs)
+                """
+            ), **kwargs)
+        except Exception:
+            return {}
+
+    async def account_get_multiple_by_user_id_with_fallback(self,
+                                                            user_ids: Iterable[str],  # noqa
+                                                            **kwargs: Any) -> list:  # noqa
+        """This method exists so that we can circumvent graphql 405's by
+        falling back to the regular account service lookup endpoint.
+        If a 405 is detected, it will use the regular account service
+        endpoint for ten minutes.
+        """
+
+        if (self.last_account_fetch_405 is None
+           or time.time() - self.last_account_fetch_405 > 10*60):
+            try:
+                return await self.account_graphql_get_multiple_by_user_id(user_ids, **kwargs)  # noqa
+            except HTTPException as exc:
+                if not self.client.fallback_on_user_lookup_405 or (exc.status != 405 or exc.status != 404):  # noqa
+                    raise
+
+                self.last_account_fetch_405 = time.time()
+
+        return await self.account_get_multiple_by_user_id(user_ids, **kwargs)
 
     ###################################
     #          Eula Tracking          #
@@ -1243,6 +1334,12 @@ class HTTPClient:
 
     async def fortnitecontent_get(self) -> dict:
         r = FortniteContentWebsite('/content/api/pages/fortnite-game')
+        return await self.get(r)
+
+    async def fetch_mnemonic(self,
+                             mnemonic: str) -> dict:
+        r = LinksPublicService('/links/api/fn/mnemonic/{mnemonic}',
+                               mnemonic=mnemonic)
         return await self.get(r)
 
     ###################################
@@ -1400,10 +1497,26 @@ class HTTPClient:
         return await self.get(r)
 
     ###################################
+    #             Ranked              #
+    ###################################
+
+    async def ranked_get_progress(self, user_id: str, *,
+                                  ends_after: Optional[datetime.datetime]) -> List[dict]:
+        params = {}
+        if ends_after:
+            params['endsAfter'] = ends_after.isoformat()
+
+        r = FortniteHabaneroService(
+            '/api/v1/games/fortnite/trackprogress/{user_id}',
+            user_id=user_id
+        )
+        return await self.get(r, params=params)
+
+    ###################################
     #             Party               #
     ###################################
 
-    async def party_disconnect(self, party_id: str, user_id: str):
+    async def party_disconnect(self, party_id: str, user_id: str) -> dict:
         r = PartyService(
             'party/api/v1/Fortnite/parties/{party_id}/members/{user_id}/disconnect',  # noqa
             party_id=party_id,
@@ -1684,4 +1797,118 @@ class HTTPClient:
 
         r = PartyService('/party/api/v1/Fortnite/parties/{party_id}',
                          party_id=party_id)
+        return await self.patch(r, json=payload, **kwargs)
+
+    ###################################
+    #          Chat Service           #
+    ###################################
+
+    async def eas_token_oauth_grant(self, **kwargs: Any) -> Any:
+        r = ChatService('/epic/oauth/v2/token')
+        return await self.post(r, **kwargs)
+
+    async def chat_send_presence(self,
+                                 connection_id: str,
+                                 status: Optional[str] = None,
+                                 **kwargs: Any
+                                 ) -> Any:
+        if not self.client.party:
+            payload = {
+                'status': 'online',
+                'props': {
+                    'EOS_Platform': 'WIN',
+                    'EOS_IntegratedPlatform': 'EGS',
+                    'EOS_OnlinePlatformType': '100',
+                    'EOS_ProductVersion': self.client.build,
+                    'EOS_ProductName': 'Fortnite',
+                    'EOS_Session': '{"version":3}',
+                    'EOS_Lobby': '{"version":3}',
+                },
+                'conn': {
+                    'props': {},
+                },
+            }
+        else:
+            party = self.client.party
+            raw_status = status or self.client.status or ''
+            if isinstance(raw_status, str):
+                formatted_status = raw_status.format(
+                    party_size=party.member_count,
+                    party_max_size=party.max_size,
+                    current_playlist=getattr(
+                        self.client, 'current_status_playlist', ''
+                    ),
+                )
+            else:
+                formatted_status = ''
+
+            try:
+                island_code = party.playlist_info[0]
+            except (IndexError, TypeError, AttributeError):
+                island_code = ''
+
+            payload = {
+                'status': 'online',
+                'activity': {
+                    'value': formatted_status,
+                },
+                'props': {
+                    'FortBasicInfo': 'm' + json.dumps(
+                        {'homeBaseRating': 0}
+                    ),
+                    'FortLFG': 'i0',
+                    'FortPartySize': 'i1',
+                    'FortSubGame': 'i1',
+                    'IslandCode': 's{0}'.format(island_code),
+                    'IsInZone': 'bfalse',
+                    'FortGameplayStats': 'm' + json.dumps(
+                        {
+                            'state': '',
+                            'playlist': 'None',
+                            'numKills': 0,
+                            'bFellToDeath': False,
+                        }
+                    ),
+                    'SocialStatus': 'm' + json.dumps(
+                        {'attendingSocialEventIds': []}
+                    ),
+                    'InUnjoinableMatch': 'bfalse',
+                    'EOS_Platform': self.client.platform.value,
+                    'EOS_IntegratedPlatform': 'EGS',
+                    'EOS_OnlinePlatformType': '100',
+                    'EOS_ProductVersion': self.client.build,
+                    'EOS_ProductName': 'Fortnite',
+                    'EOS_Session': json.dumps({'version': 3}),
+                    'EOS_Lobby': json.dumps({'version': 3}),
+                },
+                'conn': {
+                    'props': {},
+                },
+            }
+
+            try:
+                perm = party.config['privacy']['presencePermission']
+            except (KeyError, TypeError):
+                perm = None
+            if perm == 'Anyone':
+                payload['props']['party.joininfodata.286331153'] = (
+                    'm' + json.dumps({
+                        'sDN': self.client.user.display_name,
+                        'sP': self.client.platform.value,
+                        'p': party.id,
+                        'd': 'Fortnite',
+                        'b': self.client.party_build_id,
+                        'f': 6,
+                        'nAR': 0,
+                        'pc': party.member_count,
+                    })
+                )
+
+        r = ChatService(
+            '/epic/presence/v1/{deployment_id}/{user_id}/presence/'
+            '{connection_id}',
+            deployment_id=self.client.deployment_id,
+            user_id=self.client.user.id,
+            connection_id=connection_id,
+        )
         return await self.patch(r, json=payload, **kwargs)

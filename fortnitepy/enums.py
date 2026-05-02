@@ -104,7 +104,7 @@ class PartyDiscoverability(Enum):
 class PartyJoinability(Enum):
     OPEN              = 'OPEN'
     INVITE_ONLY       = 'INVITE_ONLY'
-    INVITE_AND_FORMER = 'INVITE_AND_FORMER' 
+    INVITE_AND_FORMER = 'INVITE_AND_FORMER'
 
 
 class DefaultCharactersChapter1(Enum):
@@ -155,6 +155,7 @@ class V2Input(Enum):
 class Region(Enum):
     NAEAST     = 'NAE'
     NAWEST     = 'NAW'
+    NACENTRAL  = 'NAC'
     EUROPE     = 'EU'
     BRAZIL     = 'BR'
     OCEANIA    = 'OCE'
@@ -180,6 +181,7 @@ class UserSearchPlatform(Enum):
     EPIC_GAMES  = 'epic'
     PLAYSTATION = 'psn'
     XBOX        = 'xbl'
+    STEAM       = 'steam'
 
 
 class UserSearchMatchType(Enum):
@@ -217,6 +219,7 @@ class SeasonStartTimestamp(Enum):
     SEASON_15 = 1606867201
     SEASON_16 = 1615852801
     SEASON_17 = 1623110401
+    SEASON_18 = 1631491201
 
 
 class SeasonEndTimestamp(Enum):
@@ -236,6 +239,7 @@ class SeasonEndTimestamp(Enum):
     SEASON_14 = 1606867200
     SEASON_15 = 1615852800
     SEASON_16 = 1623110400
+    SEASON_17 = 1631491200
 
 
 class BattlePassStat(Enum):
@@ -245,7 +249,8 @@ class BattlePassStat(Enum):
     SEASON_14 = ('s14_social_bp_level', SeasonEndTimestamp.SEASON_14.value)
     SEASON_15 = ('s15_social_bp_level', SeasonEndTimestamp.SEASON_15.value)
     SEASON_16 = ('s16_social_bp_level', SeasonEndTimestamp.SEASON_16.value)
-    SEASON_17 = ('s17_social_bp_level', None)
+    SEASON_17 = ('s17_social_bp_level', SeasonEndTimestamp.SEASON_17.value)
+    SEASON_18 = ('s18_social_bp_level', None)
 
 
 class KairosBackgroundColorPreset(Enum):
@@ -266,3 +271,8 @@ class KairosBackgroundColorPreset(Enum):
 
 class StatsCollectionType(Enum):
     FISH = 'collection_fish'
+
+
+class RankingType(Enum):
+    BATTLE_ROYALE = 'ranked-br'
+    ZERO_BUILD = 'ranked-zb'

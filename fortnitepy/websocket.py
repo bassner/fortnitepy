@@ -1,0 +1,604 @@
+# -*- coding: utf-8 -*-
+
+"""
+MIT License
+
+Copyright (c) 2024 Oli
+Adapted for fortnitepy from rebootpy.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+import asyncio
+import aiohttp
+import json
+import functools
+import logging
+import base64
+import datetime
+import inspect
+
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+from .enums import AwayStatus
+from .message import FriendMessage, PartyMessage
+from .presence import Presence
+
+from aiohttp import hdrs, helpers, client_reqrep, connector
+from aiohttp.http import StreamWriter, HttpVersion10, HttpVersion11
+
+if TYPE_CHECKING:
+    from .client import Client
+
+log = logging.getLogger(__name__)
+
+
+_EOS_PROP_PARSERS = {
+    's': lambda v: v,
+    'b': lambda v: v.lower() == 'true',
+    'i': lambda v: int(v),
+    'd': lambda v: float(v),
+    'U': lambda v: int(v),
+    'I': lambda v: int(v),
+}
+
+
+def _decode_eos_prop(value: Any) -> Any:
+    """Decode an EOS-style typed property value. EOS encodes property values
+    with a one-character type prefix: s=string, b=bool, i=int, d=float,
+    m=json-map. Strings without a recognised prefix are passed through.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+
+    prefix = value[0]
+    rest = value[1:]
+    if prefix == 'm':
+        try:
+            return json.loads(rest)
+        except json.JSONDecodeError:
+            return rest
+    parser = _EOS_PROP_PARSERS.get(prefix)
+    if parser is None:
+        return value
+    try:
+        return parser(rest)
+    except (ValueError, TypeError):
+        return value
+
+
+def decode_message_body(body: str) -> str:
+    try:
+        decoded = base64.b64decode(body).decode('utf-8')
+        decoded = decoded.rstrip('\x00')
+        parsed = json.loads(decoded)
+        return parsed.get('msg', body)
+    except (ValueError, KeyError, json.JSONDecodeError, Exception):
+        return body
+
+
+class WebsocketRequest(aiohttp.client_reqrep.ClientRequest):
+    # Epic's STOMP-over-WebSocket endpoint requires a non-standard initial
+    # request line that includes the full URL instead of just the path.
+    # This subclass overrides ClientRequest.send() to emit that line for any
+    # request to /stomp.
+    async def send(self,
+                   conn: "aiohttp.connector.Connection"
+                   ) -> "aiohttp.ClientResponse":
+        if self.method == hdrs.METH_CONNECT:
+            connect_host = self.url.raw_host
+            assert connect_host is not None
+            if helpers.is_ipv6_address(connect_host):
+                connect_host = f"[{connect_host}]"
+            path = f"{connect_host}:{self.url.port}"
+        elif self.proxy and not self.is_ssl():
+            path = str(self.url)
+        else:
+            path = self.url.raw_path
+            if self.url.raw_query_string:
+                path += "?" + self.url.raw_query_string
+
+        protocol = conn.protocol
+        assert protocol is not None
+
+        # aiohttp >=3.8 added on_headers_sent; older versions don't accept it.
+        writer_kwargs = {}
+        if hasattr(self, '_on_chunk_request_sent'):
+            writer_kwargs['on_chunk_sent'] = functools.partial(
+                self._on_chunk_request_sent, self.method, self.url
+            )
+        if hasattr(self, '_on_headers_request_sent'):
+            try:
+                params = inspect.signature(StreamWriter.__init__).parameters
+                if 'on_headers_sent' in params:
+                    writer_kwargs['on_headers_sent'] = functools.partial(
+                        self._on_headers_request_sent, self.method, self.url
+                    )
+            except (TypeError, ValueError):
+                pass
+
+        writer = StreamWriter(protocol, self.loop, **writer_kwargs)
+
+        if self.compress:
+            writer.enable_compression(self.compress)
+
+        if self.chunked is not None:
+            writer.enable_chunking()
+
+        if (
+            self.method in self.POST_METHODS
+            and hdrs.CONTENT_TYPE not in self.skip_auto_headers
+            and hdrs.CONTENT_TYPE not in self.headers
+        ):
+            self.headers[hdrs.CONTENT_TYPE] = "application/octet-stream"
+
+        connection = self.headers.get(hdrs.CONNECTION)
+        if not connection:
+            if self.keep_alive():
+                if self.version == HttpVersion10:
+                    connection = "keep-alive"
+            else:
+                if self.version == HttpVersion11:
+                    connection = "close"
+
+        if connection is not None:
+            self.headers[hdrs.CONNECTION] = connection
+
+        status_line = "{0} {1} HTTP/{2[0]}.{2[1]}".format(
+            self.method, path, self.version
+        ) if "/stomp" not in path else "GET https://connect.epicgames.dev/ " \
+                                       "HTTP/1.1"
+        await writer.write_headers(status_line, self.headers)
+
+        # aiohttp >=3.8 added a third arg to write_bytes; fall back when it
+        # isn't accepted.
+        try:
+            self._writer = self.loop.create_task(
+                self.write_bytes(writer, conn, None)
+            )
+        except TypeError:
+            self._writer = self.loop.create_task(
+                self.write_bytes(writer, conn)
+            )
+
+        response_class = self.response_class
+        assert response_class is not None
+        self.response = response_class(
+            self.method,
+            self.original_url,
+            writer=self._writer,
+            continue100=self._continue,
+            timer=self._timer,
+            request_info=self.request_info,
+            traces=self._traces,
+            loop=self.loop,
+            session=self._session,
+        )
+        return self.response
+
+
+class WebsocketClient:
+    def __init__(self, client: 'Client') -> None:
+        self.client = client
+
+        self.wss_session = None
+        self.websocket = None
+        self.ws_task = None
+
+        self.heartbeat_started = False
+
+        self.connection_id = None
+
+    async def set_session(self) -> None:
+        self.wss_session = aiohttp.ClientSession(
+            skip_auto_headers=["Accept", "Accept-Encoding", "User-Agent"],
+            request_class=WebsocketRequest
+        )
+
+    async def send_presence(self, connection_id: str) -> None:
+        await self.client.http.chat_send_presence(
+            connection_id=connection_id,
+            auth="EAS_ACCESS_TOKEN",
+            status=getattr(self.client.xmpp, 'status', '') or '',
+        )
+
+    async def send_heartbeat(self, delay: int) -> None:
+        while not self.websocket.closed:
+            await self.websocket.send_str("\n")
+            await asyncio.sleep(delay)
+
+    def _build_presence_data(
+        self,
+        ns_entry: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Translate an EOS perNs entry into the dict shape that fortnitepy's
+        :class:`Presence` constructor expects. Returns a dict with the legacy
+        XMPP keys: Status, bIsPlaying, bIsJoinable, bHasVoiceSupport,
+        SessionId, Properties.
+        """
+        if ns_entry is None:
+            return {
+                'Status': '',
+                'bIsPlaying': False,
+                'bIsJoinable': False,
+                'bHasVoiceSupport': False,
+                'SessionId': '',
+                'Properties': {},
+            }
+
+        activity = ns_entry.get('activity') or {}
+        status_text = activity.get('value') or ''
+
+        raw_props = ns_entry.get('props') or {}
+        decoded = {k: _decode_eos_prop(v) for k, v in raw_props.items()}
+
+        session_id = decoded.get('SessionIdAttributeKey') or ''
+
+        in_unjoinable_match = decoded.get('InUnjoinableMatch')
+        if isinstance(in_unjoinable_match, bool):
+            joinable = not in_unjoinable_match
+        else:
+            joinable = False
+
+        properties: Dict[str, Any] = {
+            'KairosProfile_j': {},
+        }
+
+        def _put_str(key: str, src: str) -> None:
+            v = decoded.get(src)
+            if v is not None:
+                properties[key] = str(v)
+
+        def _put_int(key: str, src: str) -> None:
+            v = decoded.get(src)
+            if v is not None:
+                try:
+                    properties[key] = int(v)
+                except (TypeError, ValueError):
+                    pass
+
+        def _put_dict(key: str, src: str) -> None:
+            v = decoded.get(src)
+            if isinstance(v, dict):
+                properties[key] = v
+
+        _put_dict('FortBasicInfo_j', 'FortBasicInfo')
+        _put_str('FortLFG_I', 'FortLFG')
+        _put_int('FortPartySize_i', 'FortPartySize')
+        _put_int('FortSubGame_i', 'FortSubGame')
+
+        # fortnitepy.Presence does int() on this value, so the bool-typed XMPP
+        # form (Python bool) is what's expected — not the string 'true'/'false'.
+        if isinstance(in_unjoinable_match, bool):
+            properties['InUnjoinableMatch_b'] = in_unjoinable_match
+
+        _put_dict('FortGameplayStats_j', 'FortGameplayStats')
+        _put_dict('SocialStatus_j', 'SocialStatus')
+        _put_str('GamePlaylistName_s', 'GamePlaylistName')
+        _put_str('Event_PlayersAlive_s', 'Event_PlayersAlive')
+        _put_str('Event_PartySize_s', 'Event_PartySize')
+        _put_str('Event_PartyMaxSize_s', 'Event_PartyMaxSize')
+
+        join_info = None
+        for k, v in decoded.items():
+            if k.startswith('party.joininfodata.') and isinstance(v, dict):
+                join_info = (k, v)
+                break
+        if join_info is not None:
+            join_key, join_data = join_info
+            mapped_join = dict(join_data)
+            # The compact-key form sent by Epic over EOS uses single letters;
+            # fortnitepy.PresenceParty reads the long-form keys.
+            if 'p' in join_data and 'partyId' not in mapped_join:
+                mapped_join['partyId'] = join_data['p']
+            if 'd' in join_data and 'appId' not in mapped_join:
+                mapped_join['appId'] = join_data['d']
+            if 'b' in join_data and 'buildId' not in mapped_join:
+                mapped_join['buildId'] = join_data['b']
+            if 'sP' in join_data and 'sourcePlatform' not in mapped_join:
+                mapped_join['sourcePlatform'] = join_data['sP']
+            if 'sDN' in join_data and 'sourceDisplayName' not in mapped_join:
+                mapped_join['sourceDisplayName'] = join_data['sDN']
+            if 'pc' in join_data and 'pc' not in mapped_join:
+                mapped_join['pc'] = join_data['pc']
+            properties['{0}_j'.format(join_key)] = mapped_join
+
+        return {
+            'Status': status_text,
+            'bIsPlaying': True,
+            'bIsJoinable': joinable,
+            'bHasVoiceSupport': False,
+            'SessionId': session_id,
+            'Properties': properties,
+        }
+
+    def _eos_status_to_available(self, status: Optional[str]) -> bool:
+        if status is None:
+            return True
+        s = status.lower()
+        if s in ('offline', 'invisible'):
+            return False
+        return True
+
+    async def _handle_eos_presence(self, payload: Dict[str, Any]) -> None:
+        account_id = payload.get('accountId')
+        if not account_id:
+            return
+        if account_id == self.client.user.id:
+            return
+
+        # Skip presence updates for accounts that haven't been added to the
+        # local friend cache yet. Don't block waiting — STOMP frames are
+        # processed sequentially and waiting here would back up the queue.
+        friend = self.client.get_friend(account_id)
+        if friend is None:
+            return
+
+        eos_status = payload.get('status')
+        is_available = self._eos_status_to_available(eos_status)
+        try:
+            away = AwayStatus(eos_status) if eos_status else AwayStatus.ONLINE
+        except ValueError:
+            away = AwayStatus.ONLINE
+
+        per_ns = payload.get('perNs') or []
+        ns_entry = None
+        for entry in per_ns:
+            if not isinstance(entry, dict):
+                continue
+            if (entry.get('ns') == self.client.deployment_id
+                    or entry.get('productId') == 'prod-fn'):
+                ns_entry = entry
+                break
+
+        data = self._build_presence_data(ns_entry)
+
+        platform = 'WIN'
+        if ns_entry is not None:
+            raw_props = ns_entry.get('props') or {}
+            platform_value = raw_props.get('EOS_Platform')
+            if isinstance(platform_value, str) and platform_value:
+                if platform_value[0] in 'sib':
+                    platform_value = platform_value[1:]
+                platform = platform_value or 'WIN'
+
+        try:
+            presence = Presence(
+                self.client,
+                account_id,
+                platform,
+                is_available,
+                away,
+                data,
+            )
+        except (KeyError, ValueError):
+            log.debug(
+                'Skipping malformed EOS presence for %s', account_id,
+                exc_info=True,
+            )
+            return
+        except Exception:
+            log.exception(
+                'Unexpected error building EOS presence for %s', account_id,
+            )
+            return
+
+        before_pres = friend.last_presence
+
+        if not is_available and friend.is_online():
+            try:
+                friend._update_last_logout(datetime.datetime.utcnow())
+            except Exception:
+                pass
+            try:
+                del self.client._presences[account_id]
+            except KeyError:
+                pass
+        else:
+            self.client._presences[account_id] = presence
+
+        self.client.dispatch_event(
+            'friend_presence', before_pres, presence
+        )
+
+    async def parse_message(self, raw: str) -> None:
+        try:
+            raw_headers, raw_json = raw.split('\n\n', 1)
+        except ValueError:
+            log.debug('STOMP frame missing body separator: %r', raw)
+            return
+
+        header_lines = raw_headers.splitlines()
+        if not header_lines:
+            return
+        message_type = header_lines[0]
+
+        headers = {}
+        for line in header_lines[1:]:
+            if ':' not in line:
+                continue
+            key, value = line.split(':', 1)
+            headers[key.strip()] = value.strip()
+
+        try:
+            data = json.loads(raw_json[:-1]) if len(raw_json) >= 3 else {}
+        except json.JSONDecodeError:
+            data = {}
+
+        log.debug(
+            'Received STOMP %s with headers %s and body %s',
+            message_type, headers, data,
+        )
+
+        if message_type == 'CONNECTED' and not self.heartbeat_started:
+            self.heartbeat_started = True
+
+            try:
+                delay = int(headers['heart-beat'].split(',')[1]) // 1000
+            except (KeyError, ValueError, IndexError):
+                delay = 30
+            self.client.loop.create_task(self.send_heartbeat(delay))
+
+            await self.websocket.send_str(
+                "SUBSCRIBE\nid:0\ndestination:launcher\n\n\x00"
+            )
+        elif (message_type == 'MESSAGE' and 'type' in data
+              and data['type'] == 'core.connect.v1.connected'):
+            self.connection_id = data['connectionId']
+            try:
+                await self.send_presence(connection_id=self.connection_id)
+            except Exception:
+                log.exception('Failed to send initial EOS presence')
+        elif (
+            message_type == 'MESSAGE'
+            and data.get('type') == 'presence.v1.UPDATE'
+        ):
+            try:
+                await self._handle_eos_presence(data.get('payload') or {})
+            except Exception:
+                log.exception('Error handling EOS presence update')
+        elif (
+            message_type == 'MESSAGE'
+            and data.get('type') == 'social.chat.v1.NEW_MESSAGE'
+            and (data.get('payload', {}) or {}).get(
+                'conversation', {}
+            ).get('type') == 'dm'
+        ):
+            sender_id = data['payload']['message']['senderId']
+            author = self.client.get_friend(sender_id)
+            if author is None:
+                try:
+                    author = await self.client.wait_for(
+                        'friend_add',
+                        check=lambda f, _sid=sender_id: f.id == _sid,
+                        timeout=2
+                    )
+                except asyncio.TimeoutError:
+                    return
+
+            try:
+                decoded_content = decode_message_body(
+                    data['payload']['message']['body']
+                )
+                m = FriendMessage(
+                    client=self.client,
+                    author=author,
+                    content=decoded_content
+                )
+                self.client.dispatch_event('friend_message', m)
+            except ValueError:
+                pass
+        elif (
+            message_type == 'MESSAGE'
+            and data.get('type') == 'social.chat.v1.NEW_MESSAGE'
+            and (data.get('payload', {}) or {}).get(
+                'conversation', {}
+            ).get('type') == 'party'
+        ):
+            user_id = data['payload']['message']['senderId']
+            party = self.client.party
+
+            if (party is None
+                    or user_id == self.client.user.id
+                    or user_id not in party._members):
+                return
+
+            decoded_content = decode_message_body(
+                data['payload']['message']['body']
+            )
+            self.client.dispatch_event('party_message', PartyMessage(
+                client=self.client,
+                party=party,
+                author=party._members[user_id],
+                content=decoded_content
+            ))
+        elif (
+            message_type == 'ERROR'
+            and data.get('statusCode') == 4019
+        ):
+            log.debug('STOMP authentication token is now invalid')
+            await self.restart()
+
+    async def connect_to_websocket(self) -> None:
+        headers = {
+            'Authorization': f'Bearer {self.client.auth.eas_access_token}',
+            'Epic-Connect-Protocol': 'stomp',
+            'Sec-WebSocket-Protocol': 'v10.stomp,v11.stomp,v12.stomp',
+            'Epic-Connect-Device-Id': ' ',
+        }
+        try:
+            async with self.wss_session.ws_connect(
+                "wss://connect.epicgames.dev/stomp",
+                protocols=['stomp'],
+                headers=headers,
+            ) as websocket:
+                self.websocket = websocket
+                log.info('STOMP websocket connected')
+                connect_frame = (
+                    "CONNECT\nheart-beat:30000,0\n"
+                    "accept-version:1.0,1.1,1.2\n\n\x00"
+                )
+                await websocket.send_str(connect_frame)
+
+                async for msg in websocket:
+                    try:
+                        await self.parse_message(msg.data.decode())
+                    except Exception:
+                        log.exception('Error handling STOMP frame')
+        except Exception:
+            log.exception('STOMP websocket connect failed')
+
+    async def run(self) -> None:
+        log.debug('Starting STOMP websocket client')
+        if self.wss_session is None:
+            await self.set_session()
+        self.ws_task = self.client.loop.create_task(
+            self.connect_to_websocket()
+        )
+
+    async def close(self) -> None:
+        log.debug('Closing STOMP websocket client')
+        if self.websocket is not None:
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+        if self.wss_session is not None:
+            try:
+                await self.wss_session.close()
+            except Exception:
+                pass
+            self.wss_session = None
+
+        self.heartbeat_started = False
+        self.connection_id = None
+
+    async def restart(self) -> None:
+        log.debug('Restarting STOMP websocket client')
+        await self.close()
+
+        if self.ws_task:
+            self.ws_task.cancel()
+            try:
+                await self.ws_task
+            except asyncio.CancelledError:
+                pass
+            self.ws_task = None
+
+        await self.run()

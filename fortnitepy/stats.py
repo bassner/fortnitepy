@@ -181,14 +181,23 @@ class StatsV2(_StatsBase):
     def parse(self) -> None:
         result = {}
         for fullname, stat in self.raw['stats'].items():
-            if fullname in skips:
+            if not fullname.startswith('br_'):
                 continue
 
             parts = fullname.split('_')
 
-            name = parts[1]
-            inp = parts[2]
-            playlist = '_'.join(parts[5:])
+            arena_prefix = parts[1] == 'arena'
+            tn_prefix = parts[1] == 'tournament'
+
+            if arena_prefix or tn_prefix:
+                continue
+                # name = parts[2]
+                # inp = parts[3]
+                # playlist = '_'.join(parts[6:])
+            else:
+                name = parts[1]
+                inp = parts[2]
+                playlist = '_'.join(parts[5:])
 
             try:
                 name = replacers[name]
