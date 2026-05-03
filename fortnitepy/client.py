@@ -1221,6 +1221,9 @@ class Client:
             if friend not in pre_friends:
                 added_friends.append(friend)
                 self.dispatch_event('friend_add', friend)
+                self.loop.create_task(
+                    self.websocket._flush_buffered_presence(friend.id)
+                )
 
         for pending in pre_pending:
             if (pending not in self._pending_friends.values()

@@ -747,6 +747,9 @@ class XMPPClient:
                 ))
 
             self.client.dispatch_event('friend_add', f)
+            self.client.loop.create_task(
+                self.client.websocket._flush_buffered_presence(f.id)
+            )
 
         elif _status == 'PENDING':
             data = self.client.get_user(_id)
