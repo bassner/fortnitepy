@@ -223,9 +223,9 @@ class WebsocketClient:
             status=getattr(self.client.xmpp, 'status', '') or '',
         )
 
-    async def send_heartbeat(self, delay: int) -> None:
-        while not self.websocket.closed:
-            await self.websocket.send_str("\n")
+    async def send_heartbeat(self, delay: float, ws) -> None:
+        while not ws.closed:
+            await ws.send_str("\n")
             await asyncio.sleep(delay)
 
     def _build_presence_data(
@@ -476,7 +476,7 @@ class WebsocketClient:
             if sy > 0:
                 interval_ms = max(30000, sy)
                 self.heartbeat_task = self.client.loop.create_task(
-                    self.send_heartbeat(interval_ms / 1000)
+                    self.send_heartbeat(interval_ms / 1000, self.websocket)
                 )
 
             await self.websocket.send_str(
@@ -598,6 +598,7 @@ class WebsocketClient:
     async def _connect_loop(self) -> None:
         backoff = 5
         while not self._closing:
+            self._cancel_heartbeat()
             self.heartbeat_started = False
             self.connection_id = None
             try:
