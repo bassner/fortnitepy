@@ -98,6 +98,10 @@ class Auth:
         # which is what Epic accepts at https://api.epicgames.dev/epic/oauth/v2/token.
         self.launcher_token = kwargs.get('launcher_token', 'M2Y2OWU1NmM3NjQ5NDkyYzhjYzI5ZjFhZjA4YThhMTI6YjUxZWU5Y2IxMjIzNGY1MGE2OWVmYTY3ZWY1MzgxMmU=')  # noqa
 
+        self.eas_access_token = None
+        self.eas_refresh_token = None
+        self.eas_expires_at = None
+
     def initialize(self, client: 'Client') -> None:
         self.client = client
         self.device_id = getattr(self, 'device_id', None) or uuid.uuid4().hex
@@ -257,12 +261,11 @@ class Auth:
             priority=priority,
         )
 
-    async def _grant_and_update_eas(self, *, priority: int = 0) -> None:
+    async def _grant_and_update_eas(self, *, priority: int = 0) -> bool:
         try:
-            eas_refresh_token = getattr(self, 'eas_refresh_token', None)
-            if eas_refresh_token is not None:
+            if self.eas_refresh_token is not None:
                 data = await self.grant_eas_refresh_token(
-                    eas_refresh_token,
+                    self.eas_refresh_token,
                     priority=priority,
                 )
             else:
@@ -277,10 +280,30 @@ class Auth:
                 )
         except HTTPException as exc:
             log.warning(
-                'Failed to acquire EAS access token: %s', exc,
+                'EAS refresh failed (%s), clearing tokens and '
+                're-bootstrapping', exc,
             )
-            return
+            self.eas_access_token = None
+            self.eas_refresh_token = None
+            self.eas_expires_at = None
+            try:
+                launcher_session = await self._bootstrap_launcher_session(
+                    priority=priority,
+                )
+                self.launcher_access_token = launcher_session['access_token']
+                self.launcher_refresh_token = launcher_session['refresh_token']
+                data = await self.grant_eas_refresh_token(
+                    self.launcher_refresh_token,
+                    priority=priority,
+                )
+            except HTTPException as exc2:
+                log.warning(
+                    'EAS bootstrap retry also failed: %s', exc2,
+                )
+                return False
+
         self._update_eas_data(data)
+        return True
 
     async def get_exchange_code(self, *,
                                 auth='IOS_ACCESS_TOKEN',

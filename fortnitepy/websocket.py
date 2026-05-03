@@ -33,8 +33,9 @@ import logging
 import base64
 import datetime
 import inspect
+import time
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from .enums import AwayStatus
 from .message import FriendMessage, PartyMessage
@@ -200,10 +201,14 @@ class WebsocketClient:
         self.wss_session = None
         self.websocket = None
         self.ws_task = None
+        self.heartbeat_task = None
 
         self.heartbeat_started = False
+        self._closing = False
 
         self.connection_id = None
+
+        self._presence_buffer: Dict[str, Tuple[dict, float]] = {}
 
     async def set_session(self) -> None:
         self.wss_session = aiohttp.ClientSession(
@@ -336,6 +341,17 @@ class WebsocketClient:
             return False
         return True
 
+    async def _flush_buffered_presence(self, account_id: str) -> None:
+        entry = self._presence_buffer.pop(account_id, None)
+        if entry is None:
+            return
+
+        payload, ts = entry
+        if time.monotonic() - ts > 10:
+            return
+
+        await self._handle_eos_presence(payload)
+
     async def _handle_eos_presence(self, payload: Dict[str, Any]) -> None:
         account_id = payload.get('accountId')
         if not account_id:
@@ -343,11 +359,15 @@ class WebsocketClient:
         if account_id == self.client.user.id:
             return
 
-        # Skip presence updates for accounts that haven't been added to the
-        # local friend cache yet. Don't block waiting — STOMP frames are
-        # processed sequentially and waiting here would back up the queue.
+        now = time.monotonic()
+        expired = [k for k, (_, t) in self._presence_buffer.items()
+                   if now - t > 10]
+        for k in expired:
+            del self._presence_buffer[k]
+
         friend = self.client.get_friend(account_id)
         if friend is None:
+            self._presence_buffer[account_id] = (payload, now)
             return
 
         eos_status = payload.get('status')
@@ -374,9 +394,8 @@ class WebsocketClient:
             raw_props = ns_entry.get('props') or {}
             platform_value = raw_props.get('EOS_Platform')
             if isinstance(platform_value, str) and platform_value:
-                if platform_value[0] in 'sib':
-                    platform_value = platform_value[1:]
-                platform = platform_value or 'WIN'
+                decoded = _decode_eos_prop(platform_value)
+                platform = str(decoded) if decoded and isinstance(decoded, str) else 'WIN'
 
         try:
             presence = Presence(
@@ -450,10 +469,15 @@ class WebsocketClient:
             self.heartbeat_started = True
 
             try:
-                delay = int(headers['heart-beat'].split(',')[1]) // 1000
+                sy = int(headers['heart-beat'].split(',')[1])
             except (KeyError, ValueError, IndexError):
-                delay = 30
-            self.client.loop.create_task(self.send_heartbeat(delay))
+                sy = 30000
+
+            if sy > 0:
+                interval_ms = max(30000, sy)
+                self.heartbeat_task = self.client.loop.create_task(
+                    self.send_heartbeat(interval_ms / 1000)
+                )
 
             await self.websocket.send_str(
                 "SUBSCRIBE\nid:0\ndestination:launcher\n\n\x00"
@@ -536,44 +560,78 @@ class WebsocketClient:
             await self.restart()
 
     async def connect_to_websocket(self) -> None:
+        if self.client.auth.eas_access_token is None:
+            log.warning('No EAS token, skipping STOMP connection')
+            return
+
         headers = {
             'Authorization': f'Bearer {self.client.auth.eas_access_token}',
             'Epic-Connect-Protocol': 'stomp',
             'Sec-WebSocket-Protocol': 'v10.stomp,v11.stomp,v12.stomp',
             'Epic-Connect-Device-Id': ' ',
         }
-        try:
-            async with self.wss_session.ws_connect(
-                "wss://connect.epicgames.dev/stomp",
-                protocols=['stomp'],
-                headers=headers,
-            ) as websocket:
-                self.websocket = websocket
-                log.info('STOMP websocket connected')
-                connect_frame = (
-                    "CONNECT\nheart-beat:30000,0\n"
-                    "accept-version:1.0,1.1,1.2\n\n\x00"
-                )
-                await websocket.send_str(connect_frame)
+        async with self.wss_session.ws_connect(
+            "wss://connect.epicgames.dev/stomp",
+            protocols=['stomp'],
+            headers=headers,
+        ) as websocket:
+            self.websocket = websocket
+            log.info('STOMP websocket connected')
+            connect_frame = (
+                "CONNECT\nheart-beat:30000,0\n"
+                "accept-version:1.0,1.1,1.2\n\n\x00"
+            )
+            await websocket.send_str(connect_frame)
 
-                async for msg in websocket:
-                    try:
+            async for msg in websocket:
+                try:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await self.parse_message(msg.data)
+                    elif msg.type == aiohttp.WSMsgType.BINARY:
                         await self.parse_message(msg.data.decode())
-                    except Exception:
-                        log.exception('Error handling STOMP frame')
-        except Exception:
-            log.exception('STOMP websocket connect failed')
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED,
+                                      aiohttp.WSMsgType.ERROR):
+                        break
+                except Exception:
+                    log.exception('Error handling STOMP frame')
+
+    async def _connect_loop(self) -> None:
+        backoff = 5
+        while not self._closing:
+            self.heartbeat_started = False
+            self.connection_id = None
+            try:
+                await self.connect_to_websocket()
+                if self.heartbeat_started:
+                    backoff = 5
+            except Exception:
+                log.exception('STOMP websocket connect failed')
+
+            if self._closing:
+                break
+
+            log.debug('STOMP reconnecting in %ds', backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 300)
 
     async def run(self) -> None:
         log.debug('Starting STOMP websocket client')
+        self._closing = False
         if self.wss_session is None:
             await self.set_session()
-        self.ws_task = self.client.loop.create_task(
-            self.connect_to_websocket()
-        )
+        if self.ws_task is None or self.ws_task.done():
+            self.ws_task = self.client.loop.create_task(self._connect_loop())
+
+    def _cancel_heartbeat(self) -> None:
+        if self.heartbeat_task is not None:
+            self.heartbeat_task.cancel()
+            self.heartbeat_task = None
 
     async def close(self) -> None:
         log.debug('Closing STOMP websocket client')
+        self._closing = True
+        self._cancel_heartbeat()
+
         if self.websocket is not None:
             try:
                 await self.websocket.close()
@@ -586,19 +644,44 @@ class WebsocketClient:
                 pass
             self.wss_session = None
 
-        self.heartbeat_started = False
-        self.connection_id = None
-
-    async def restart(self) -> None:
-        log.debug('Restarting STOMP websocket client')
-        await self.close()
-
-        if self.ws_task:
+        if self.ws_task is not None:
             self.ws_task.cancel()
             try:
                 await self.ws_task
             except asyncio.CancelledError:
                 pass
             self.ws_task = None
+
+        self.heartbeat_started = False
+        self.connection_id = None
+
+    async def restart(self) -> None:
+        log.debug('Restarting STOMP websocket client')
+        self._cancel_heartbeat()
+        self._closing = True
+
+        if self.websocket is not None:
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
+
+        if self.ws_task is not None:
+            self.ws_task.cancel()
+            try:
+                await self.ws_task
+            except asyncio.CancelledError:
+                pass
+            self.ws_task = None
+
+        if self.wss_session is not None:
+            try:
+                await self.wss_session.close()
+            except Exception:
+                pass
+            self.wss_session = None
+
+        self.heartbeat_started = False
+        self.connection_id = None
 
         await self.run()
