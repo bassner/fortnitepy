@@ -93,6 +93,10 @@ class Auth:
     def __init__(self, **kwargs: Any) -> None:
         self.ios_token = kwargs.get('ios_token', 'MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=')  # noqa
         self.fortnite_token = kwargs.get('fortnite_token', 'ZWM2ODRiOGM2ODdmNDc5ZmFkZWEzY2IyYWQ4M2Y1YzY6ZTFmMzFjMjExZjI4NDEzMTg2MjYyZDM3YTEzZmM4NGQ=')  # noqa
+        # Launcher client (EpicGamesLauncher / EAS-authorised); used for EOS
+        # presence / chat. Its client_id is 3f69e56c7649492c8cc29f1af08a8a12
+        # which is what Epic accepts at https://api.epicgames.dev/epic/oauth/v2/token.
+        self.launcher_token = kwargs.get('launcher_token', 'M2Y2OWU1NmM3NjQ5NDkyYzhjYzI5ZjFhZjA4YThhMTI6YjUxZWU5Y2IxMjIzNGY1MGE2OWVmYTY3ZWY1MzgxMmU=')  # noqa
 
     def initialize(self, client: 'Client') -> None:
         self.client = client
@@ -108,6 +112,10 @@ class Auth:
     @property
     def authorization(self) -> str:
         return 'bearer {0}'.format(self.access_token)
+
+    @property
+    def eas_authorization(self) -> str:
+        return 'bearer {0}'.format(self.eas_access_token)
 
     @property
     def identifier(self) -> str:
@@ -191,6 +199,16 @@ class Auth:
         self.app = data['app']
         self.in_app_id = data['in_app_id']
 
+    def _update_eas_data(self, data: dict) -> None:
+        self.eas_access_token = data['access_token']
+        self.eas_expires_in = data['expires_in']
+        self.eas_expires_at = self.client.from_iso(data["expires_at"])
+        self.eas_token_type = data['token_type']
+        self.eas_refresh_token = data['refresh_token']
+        self.eas_client_id = data.get('client_id')
+        self.eas_application_id = data.get('application_id')
+        self.eas_scope = data.get('scope')
+
     async def grant_refresh_token(self, refresh_token: str, auth_token: str, *,
                                   priority: int = 0) -> dict:
         payload = {
@@ -204,6 +222,65 @@ class Auth:
             data=payload,
             priority=priority
         )
+
+    async def grant_eas_refresh_token(self,
+                                      refresh_token: str,
+                                      *,
+                                      priority: int = 0) -> dict:
+        payload = {
+            'grant_type': 'refresh_token',
+            'scope': 'basic_profile friends_list presence openid',
+            'refresh_token': refresh_token,
+            'deployment_id': self.client.deployment_id,
+        }
+
+        return await self.client.http.eas_token_oauth_grant(
+            auth='basic {0}'.format(self.launcher_token),
+            data=payload,
+            priority=priority,
+        )
+
+    async def _bootstrap_launcher_session(self, *, priority: int = 0) -> dict:
+        code = await self.get_exchange_code(
+            auth='IOS_ACCESS_TOKEN',
+            consuming_token=self.launcher_token,
+            priority=priority,
+        )
+        payload = {
+            'grant_type': 'exchange_code',
+            'exchange_code': code,
+            'token_type': 'eg1',
+        }
+        return await self.client.http.account_oauth_grant(
+            auth='basic {0}'.format(self.launcher_token),
+            data=payload,
+            priority=priority,
+        )
+
+    async def _grant_and_update_eas(self, *, priority: int = 0) -> None:
+        try:
+            eas_refresh_token = getattr(self, 'eas_refresh_token', None)
+            if eas_refresh_token is not None:
+                data = await self.grant_eas_refresh_token(
+                    eas_refresh_token,
+                    priority=priority,
+                )
+            else:
+                launcher_session = await self._bootstrap_launcher_session(
+                    priority=priority,
+                )
+                self.launcher_access_token = launcher_session['access_token']
+                self.launcher_refresh_token = launcher_session['refresh_token']
+                data = await self.grant_eas_refresh_token(
+                    self.launcher_refresh_token,
+                    priority=priority,
+                )
+        except HTTPException as exc:
+            log.warning(
+                'Failed to acquire EAS access token: %s', exc,
+            )
+            return
+        self._update_eas_data(data)
 
     async def get_exchange_code(self, *,
                                 auth='IOS_ACCESS_TOKEN',
@@ -264,7 +341,11 @@ class Auth:
         return task is not None and not task.cancelled()
 
     async def schedule_token_refresh(self) -> None:
-        subtracted = min([self.ios_expires_at, self.expires_at]) - datetime.datetime.utcnow()
+        candidates = [self.ios_expires_at, self.expires_at]
+        eas_expires_at = getattr(self, 'eas_expires_at', None)
+        if eas_expires_at is not None:
+            candidates.append(eas_expires_at)
+        subtracted = min(candidates) - datetime.datetime.utcnow()
         self.token_timeout = (subtracted).total_seconds() - 300
         await asyncio.sleep(self.token_timeout)
 
@@ -310,6 +391,10 @@ class Auth:
                     priority=reauth_lock.priority
                 )
                 self._update_data(data)
+
+                await self._grant_and_update_eas(
+                    priority=reauth_lock.priority,
+                )
             except (HTTPException, AttributeError) as exc:
                 m = 'errors.com.epicgames.account.auth_token.' \
                     'invalid_refresh_token'
@@ -337,6 +422,13 @@ class Auth:
                 await self.client._reconnect_to_party()
             except AttributeError:
                 pass
+
+            try:
+                websocket = getattr(self.client, 'websocket', None)
+                if websocket is not None:
+                    await websocket.restart()
+            except Exception:
+                log.exception('Failed to restart STOMP websocket after refresh')
 
             self.refresh_i += 1
             log.debug('Sessions was successfully refreshed.')
@@ -525,6 +617,8 @@ class EmailAndPasswordAuth(Auth):
         )
         self._update_data(data)
 
+        await self._grant_and_update_eas()
+
 
 class ExchangeCodeAuth(Auth):
     """Authenticates by an exchange code.
@@ -618,6 +712,8 @@ class ExchangeCodeAuth(Auth):
             code
         )
         self._update_data(data)
+
+        await self._grant_and_update_eas()
 
 
 class AuthorizationCodeAuth(ExchangeCodeAuth):
@@ -784,6 +880,10 @@ class DeviceAuth(Auth):
         )
         self._update_data(data)
 
+        await self._grant_and_update_eas(
+            priority=priority,
+        )
+
     async def reauthenticate(self, priority: int = 0) -> None:
         """Used for reauthenticating if refreshing fails."""
         log.debug('Starting reauthentication.')
@@ -833,6 +933,10 @@ class RefreshTokenAuth(Auth):
             priority=priority
         )
         self._update_data(data)
+
+        await self._grant_and_update_eas(
+            priority=priority,
+        )
 
 
 class AdvancedAuth(Auth):
@@ -1171,6 +1275,8 @@ class AdvancedAuth(Auth):
         )
         self._update_data(data)
 
+        await self._grant_and_update_eas()
+
     async def reauthenticate(self, priority: int = 0) -> None:
         log.debug('Starting reauthentication.')
 
@@ -1191,4 +1297,8 @@ class AdvancedAuth(Auth):
             priority=priority
         )
         self._update_data(data)
+
+        await self._grant_and_update_eas(
+            priority=priority,
+        )
         log.debug('Successfully reauthenticated.')

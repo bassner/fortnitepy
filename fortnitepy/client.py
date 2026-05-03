@@ -42,6 +42,7 @@ from .errors import (PartyError, HTTPException, NotFound, Forbidden,
                      InviteeMaxFriendshipRequestsExceeded, PartyIsFull)
 from .rankedprogress import RankedProgress
 from .xmpp import XMPPClient
+from .websocket import WebsocketClient
 from .http import HTTPClient
 from .user import (ClientUser, User, BlockedUser, SacSearchEntryUser,
                    UserSearchEntry)
@@ -587,8 +588,14 @@ class Client:
         self.party_build_id = '1:{0.party_version}:{0.net_cl}'.format(self)
         self.default_party_config = kwargs.get('default_party_config', DefaultPartyConfig())  # noqa
         self.default_party_member_config = kwargs.get('default_party_member_config', DefaultPartyMemberConfig())  # noqa
-        self.build = kwargs.get('build', '++Fortnite+Release-14.10-CL-14288110')  # noqa
+        self.build = kwargs.get('build', '++Fortnite+Release-40.30-CL-53093531')  # noqa
         self.os = kwargs.get('os', 'Windows/10.0.17134.1.768.64bit')
+        self.deployment_id = kwargs.get(
+            'deployment_id', '62a9473a2dca46b29ccf17577fcf42d7'
+        )
+        self.current_status_playlist = kwargs.get(
+            'current_status_playlist', 'Battle Royale'
+        )
         self.service_host = kwargs.get('xmpp_host', 'prod.ol.epicgames.com')
         self.service_domain = kwargs.get('xmpp_domain', 'xmpp-service-prod.ol.epicgames.com')  # noqa
         self.service_port = kwargs.get('xmpp_port', 5222)
@@ -612,6 +619,7 @@ class Client:
         )
         self.http.add_header('Accept-Language', 'en-EN')
         self.xmpp = XMPPClient(self, ws_connector=kwargs.get('ws_connector'))
+        self.websocket = WebsocketClient(self)
         self.party = None
 
         self._listeners = {}
@@ -1020,6 +1028,12 @@ class Client:
         await self.xmpp.run()
         log.debug('Connected to XMPP')
 
+        try:
+            await self.websocket.run()
+            log.debug('Started EOS STOMP websocket')
+        except Exception:
+            log.exception('Failed to start EOS STOMP websocket')
+
         await self.initialize_party(priority=priority)
         log.debug('Party created')
 
@@ -1038,6 +1052,11 @@ class Client:
 
         try:
             await self.xmpp.close()
+        except Exception:
+            pass
+
+        try:
+            await self.websocket.close()
         except Exception:
             pass
 

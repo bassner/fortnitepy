@@ -341,6 +341,11 @@ class LinksPublicService(Route):
     AUTH = 'FORTNITE_ACCESS_TOKEN'
 
 
+class ChatService(Route):
+    BASE = 'https://api.epicgames.dev'
+    AUTH = 'EAS_ACCESS_TOKEN'
+
+
 def create_aiohttp_closed_event(session) -> asyncio.Event:
     """Work around aiohttp issue that doesn't properly close transports on exit.
 
@@ -441,6 +446,8 @@ class HTTPClient:
             return self.client.auth.ios_authorization
         elif u_auth == 'FORTNITE_ACCESS_TOKEN':
             return self.client.auth.authorization
+        elif u_auth == 'EAS_ACCESS_TOKEN':
+            return self.client.auth.eas_authorization
         return auth
 
     def add_header(self, key: str, val: Any) -> None:
@@ -1790,4 +1797,118 @@ class HTTPClient:
 
         r = PartyService('/party/api/v1/Fortnite/parties/{party_id}',
                          party_id=party_id)
+        return await self.patch(r, json=payload, **kwargs)
+
+    ###################################
+    #          Chat Service           #
+    ###################################
+
+    async def eas_token_oauth_grant(self, **kwargs: Any) -> Any:
+        r = ChatService('/epic/oauth/v2/token')
+        return await self.post(r, **kwargs)
+
+    async def chat_send_presence(self,
+                                 connection_id: str,
+                                 status: Optional[str] = None,
+                                 **kwargs: Any
+                                 ) -> Any:
+        if not self.client.party:
+            payload = {
+                'status': 'online',
+                'props': {
+                    'EOS_Platform': 'WIN',
+                    'EOS_IntegratedPlatform': 'EGS',
+                    'EOS_OnlinePlatformType': '100',
+                    'EOS_ProductVersion': self.client.build,
+                    'EOS_ProductName': 'Fortnite',
+                    'EOS_Session': '{"version":3}',
+                    'EOS_Lobby': '{"version":3}',
+                },
+                'conn': {
+                    'props': {},
+                },
+            }
+        else:
+            party = self.client.party
+            raw_status = status or self.client.status or ''
+            if isinstance(raw_status, str):
+                formatted_status = raw_status.format(
+                    party_size=party.member_count,
+                    party_max_size=party.max_size,
+                    current_playlist=getattr(
+                        self.client, 'current_status_playlist', ''
+                    ),
+                )
+            else:
+                formatted_status = ''
+
+            try:
+                island_code = party.playlist_info[0]
+            except (IndexError, TypeError, AttributeError):
+                island_code = ''
+
+            payload = {
+                'status': 'online',
+                'activity': {
+                    'value': formatted_status,
+                },
+                'props': {
+                    'FortBasicInfo': 'm' + json.dumps(
+                        {'homeBaseRating': 0}
+                    ),
+                    'FortLFG': 'i0',
+                    'FortPartySize': 'i1',
+                    'FortSubGame': 'i1',
+                    'IslandCode': 's{0}'.format(island_code),
+                    'IsInZone': 'bfalse',
+                    'FortGameplayStats': 'm' + json.dumps(
+                        {
+                            'state': '',
+                            'playlist': 'None',
+                            'numKills': 0,
+                            'bFellToDeath': False,
+                        }
+                    ),
+                    'SocialStatus': 'm' + json.dumps(
+                        {'attendingSocialEventIds': []}
+                    ),
+                    'InUnjoinableMatch': 'bfalse',
+                    'EOS_Platform': self.client.platform.value,
+                    'EOS_IntegratedPlatform': 'EGS',
+                    'EOS_OnlinePlatformType': '100',
+                    'EOS_ProductVersion': self.client.build,
+                    'EOS_ProductName': 'Fortnite',
+                    'EOS_Session': json.dumps({'version': 3}),
+                    'EOS_Lobby': json.dumps({'version': 3}),
+                },
+                'conn': {
+                    'props': {},
+                },
+            }
+
+            try:
+                perm = party.config['privacy']['presencePermission']
+            except (KeyError, TypeError):
+                perm = None
+            if perm == 'Anyone':
+                payload['props']['party.joininfodata.286331153'] = (
+                    'm' + json.dumps({
+                        'sDN': self.client.user.display_name,
+                        'sP': self.client.platform.value,
+                        'p': party.id,
+                        'd': 'Fortnite',
+                        'b': self.client.party_build_id,
+                        'f': 6,
+                        'nAR': 0,
+                        'pc': party.member_count,
+                    })
+                )
+
+        r = ChatService(
+            '/epic/presence/v1/{deployment_id}/{user_id}/presence/'
+            '{connection_id}',
+            deployment_id=self.client.deployment_id,
+            user_id=self.client.user.id,
+            connection_id=connection_id,
+        )
         return await self.patch(r, json=payload, **kwargs)

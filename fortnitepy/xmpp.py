@@ -610,6 +610,8 @@ class XMPPClient:
 
         self.send_presence_on_add = True
 
+        self.status = ""
+
     def jid(self, user_id: str) -> aioxmpp.JID:
         return aioxmpp.JID.fromstr('{}@{}'.format(
             user_id,
@@ -1750,6 +1752,29 @@ class XMPPClient:
             ),
             status=json.dumps(_status)
         )
+
+        new_status = _status.get('Status') if isinstance(_status, dict) else None
+        if isinstance(new_status, str) and new_status:
+            self.status = new_status
+
+        self._dispatch_eos_presence()
+
+    def _dispatch_eos_presence(self) -> None:
+        websocket = getattr(self.client, 'websocket', None)
+        if websocket is None or websocket.connection_id is None:
+            return
+
+        async def _send():
+            try:
+                await self.client.http.chat_send_presence(
+                    connection_id=websocket.connection_id,
+                    auth='EAS_ACCESS_TOKEN',
+                    status=self.status,
+                )
+            except Exception:
+                log.exception('Failed to send EOS presence')
+
+        self.client.loop.create_task(_send())
 
     async def send_presence(self, to: Optional[aioxmpp.JID] = None,
                             status: Optional[Union[str, dict]] = None,

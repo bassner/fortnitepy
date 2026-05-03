@@ -3738,9 +3738,21 @@ class ClientParty(PartyBase, Patchable):
         status = text or self.client.status
         kairos_profile = self.client.avatar.to_dict()
 
+        formatted_status = status.format(
+            party_size=self.member_count,
+            party_max_size=self.max_size,
+            current_playlist=getattr(
+                self.client, 'current_status_playlist', ''
+            ),
+        )
+
+        try:
+            self.client.xmpp.status = formatted_status
+        except AttributeError:
+            pass
+
         _default_status = {
-            'Status': status.format(party_size=self.member_count,
-                                    party_max_size=self.max_size),
+            'Status': formatted_status,
             'bIsPlaying': True,
             'bIsJoinable': False,
             'bHasVoiceSupport': False,
