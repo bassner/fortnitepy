@@ -97,12 +97,12 @@ class Auth:
             if not isinstance(kwargs.get(name), str)
             or not kwargs[name].strip()
         ]
-        if 'launcher_token' not in kwargs:
-            missing.append('launcher_token')
-        elif (kwargs['launcher_token'] is not None
-              and (not isinstance(kwargs['launcher_token'], str)
-                   or not kwargs['launcher_token'].strip())):
-            missing.append('launcher_token')
+        if 'eas_token' not in kwargs:
+            missing.append('eas_token')
+        elif (kwargs['eas_token'] is not None
+              and (not isinstance(kwargs['eas_token'], str)
+                   or not kwargs['eas_token'].strip())):
+            missing.append('eas_token')
         if missing:
             raise ValueError(
                 'Explicit OAuth client configuration is required: {0}'.format(
@@ -112,12 +112,12 @@ class Auth:
 
         # Never silently fall back to one of Epic's first-party clients. The
         # caller owns all three OAuth client choices. Passing None for the
-        # launcher token explicitly disables the optional EAS presence/chat
+        # EAS token explicitly disables the optional EAS presence/chat
         # bootstrap; it must never fall back to a first-party client.
         self.ios_token = kwargs['ios_token']
         self.fortnite_token = kwargs['fortnite_token']
-        self.launcher_token = kwargs['launcher_token']
-        self.eas_enabled = self.launcher_token is not None
+        self.eas_token = kwargs['eas_token']
+        self.eas_enabled = self.eas_token is not None
 
         self.eas_access_token = None
         self.eas_refresh_token = None
@@ -260,24 +260,25 @@ class Auth:
         }
 
         return await self.client.http.eas_token_oauth_grant(
-            auth='basic {0}'.format(self.launcher_token),
+            auth='basic {0}'.format(self.eas_token),
             data=payload,
             priority=priority,
         )
 
-    async def _bootstrap_launcher_session(self, *, priority: int = 0) -> dict:
+    async def grant_eas_exchange_code(self, *, priority: int = 0) -> dict:
         code = await self.get_exchange_code(
             auth='IOS_ACCESS_TOKEN',
-            consuming_token=self.launcher_token,
+            consuming_token=self.eas_token,
             priority=priority,
         )
         payload = {
             'grant_type': 'exchange_code',
             'exchange_code': code,
-            'token_type': 'eg1',
+            'scope': 'basic_profile friends_list presence openid',
+            'deployment_id': self.client.deployment_id,
         }
-        return await self.client.http.account_oauth_grant(
-            auth='basic {0}'.format(self.launcher_token),
+        return await self.client.http.eas_token_oauth_grant(
+            auth='basic {0}'.format(self.eas_token),
             data=payload,
             priority=priority,
         )
@@ -293,13 +294,7 @@ class Auth:
                     priority=priority,
                 )
             else:
-                launcher_session = await self._bootstrap_launcher_session(
-                    priority=priority,
-                )
-                self.launcher_access_token = launcher_session['access_token']
-                self.launcher_refresh_token = launcher_session['refresh_token']
-                data = await self.grant_eas_refresh_token(
-                    self.launcher_refresh_token,
+                data = await self.grant_eas_exchange_code(
                     priority=priority,
                 )
         except HTTPException as exc:
@@ -311,13 +306,7 @@ class Auth:
             self.eas_refresh_token = None
             self.eas_expires_at = None
             try:
-                launcher_session = await self._bootstrap_launcher_session(
-                    priority=priority,
-                )
-                self.launcher_access_token = launcher_session['access_token']
-                self.launcher_refresh_token = launcher_session['refresh_token']
-                data = await self.grant_eas_refresh_token(
-                    self.launcher_refresh_token,
+                data = await self.grant_eas_exchange_code(
                     priority=priority,
                 )
             except HTTPException as exc2:
@@ -563,7 +552,7 @@ class EmailAndPasswordAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: Optional[:class:`str`]
+    eas_token: Optional[:class:`str`]
         The explicit OAuth basic token used for the EAS presence/chat session,
         or ``None`` to disable that optional session.
     """
@@ -699,7 +688,7 @@ class ExchangeCodeAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: Optional[:class:`str`]
+    eas_token: Optional[:class:`str`]
         The explicit OAuth basic token used for the EAS presence/chat session,
         or ``None`` to disable that optional session.
     """
@@ -789,7 +778,7 @@ class AuthorizationCodeAuth(ExchangeCodeAuth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: Optional[:class:`str`]
+    eas_token: Optional[:class:`str`]
         The explicit OAuth basic token used for the EAS presence/chat session,
         or ``None`` to disable that optional session.
     """
@@ -845,7 +834,7 @@ class DeviceAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: Optional[:class:`str`]
+    eas_token: Optional[:class:`str`]
         The explicit OAuth basic token used for the EAS presence/chat session,
         or ``None`` to disable that optional session.
     """
@@ -951,7 +940,7 @@ class RefreshTokenAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: Optional[:class:`str`]
+    eas_token: Optional[:class:`str`]
         The explicit OAuth basic token used for the EAS presence/chat session,
         or ``None`` to disable that optional session.
     """
@@ -1075,7 +1064,7 @@ class AdvancedAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: Optional[:class:`str`]
+    eas_token: Optional[:class:`str`]
         The explicit OAuth basic token used for the EAS presence/chat session,
         or ``None`` to disable that optional session.
     """
