@@ -91,12 +91,25 @@ class Auth:
         return None
 
     def __init__(self, **kwargs: Any) -> None:
-        self.ios_token = kwargs.get('ios_token', 'MzQ0NmNkNzI2OTRjNGE0NDg1ZDgxYjc3YWRiYjIxNDE6OTIwOWQ0YTVlMjVhNDU3ZmI5YjA3NDg5ZDMxM2I0MWE=')  # noqa
-        self.fortnite_token = kwargs.get('fortnite_token', 'ZWM2ODRiOGM2ODdmNDc5ZmFkZWEzY2IyYWQ4M2Y1YzY6ZTFmMzFjMjExZjI4NDEzMTg2MjYyZDM3YTEzZmM4NGQ=')  # noqa
-        # Launcher client (EpicGamesLauncher / EAS-authorised); used for EOS
-        # presence / chat. Its client_id is 3f69e56c7649492c8cc29f1af08a8a12
-        # which is what Epic accepts at https://api.epicgames.dev/epic/oauth/v2/token.
-        self.launcher_token = kwargs.get('launcher_token', 'M2Y2OWU1NmM3NjQ5NDkyYzhjYzI5ZjFhZjA4YThhMTI6YjUxZWU5Y2IxMjIzNGY1MGE2OWVmYTY3ZWY1MzgxMmU=')  # noqa
+        token_names = ('ios_token', 'fortnite_token', 'launcher_token')
+        missing = [
+            name for name in token_names
+            if not isinstance(kwargs.get(name), str)
+            or not kwargs[name].strip()
+        ]
+        if missing:
+            raise ValueError(
+                'Explicit OAuth client tokens are required: {0}'.format(
+                    ', '.join(missing)
+                )
+            )
+
+        # Never silently fall back to one of Epic's first-party clients. The
+        # caller owns all three OAuth client choices, including the launcher
+        # client used for the EAS presence/chat bootstrap.
+        self.ios_token = kwargs['ios_token']
+        self.fortnite_token = kwargs['fortnite_token']
+        self.launcher_token = kwargs['launcher_token']
 
         self.eas_access_token = None
         self.eas_refresh_token = None
@@ -535,12 +548,12 @@ class EmailAndPasswordAuth(Auth):
         will be prompted later.
     device_id: Optional[:class:`str`]
         A 32 char hex representing your device.
-    ios_token: Optional[:class:`str`]
-        The ios token to use with authentication. You should generally
-        not need to set this manually.
-    fortnite_token: Optional[:class:`str`]
-        The fortnite token to use with authentication. You should generally
-        not need to set this manually.
+    ios_token: :class:`str`
+        The explicit OAuth basic token used for the initial authentication.
+    fortnite_token: :class:`str`
+        The explicit OAuth basic token used for the Fortnite session.
+    launcher_token: :class:`str`
+        The explicit OAuth basic token used for the EAS presence/chat session.
     """
     def __init__(self, email: str, password: str, *,
                  two_factor_code: Optional[int] = None,
@@ -670,12 +683,12 @@ class ExchangeCodeAuth(Auth):
         the exchange code.
     device_id: Optional[:class:`str`]
         A 32 char hex string representing your device.
-    ios_token: Optional[:class:`str`]
-        The ios token to use with authentication. You should generally
-        not need to set this manually.
-    fortnite_token: Optional[:class:`str`]
-        The fortnite token to use with authentication. You should generally
-        not need to set this manually.
+    ios_token: :class:`str`
+        The explicit OAuth basic token used for the initial authentication.
+    fortnite_token: :class:`str`
+        The explicit OAuth basic token used for the Fortnite session.
+    launcher_token: :class:`str`
+        The explicit OAuth basic token used for the EAS presence/chat session.
     """
     def __init__(self, code: StrOrMaybeCoro,
                  **kwargs: Any) -> None:
@@ -742,13 +755,9 @@ class ExchangeCodeAuth(Auth):
 class AuthorizationCodeAuth(ExchangeCodeAuth):
     """Authenticates by exchange code.
 
-    You can get the code from `here
-    <https://www.epicgames.com/id/api/redirect?
-    clientId=3446cd72694c4a4485d81b77adbb2141&responseType=code>`_ by logging
-    in and copying the code from the redirectUrl's query parameters. If you
-    are already logged in and want to change accounts, simply log out at
-    https://www.epicgames.com, log in to the new account and then enter the
-    link above again to generate an authorization code.
+    Obtain the code through the authorization redirect configured for the
+    OAuth client supplied as ``ios_token``. Copy the code from the redirect
+    URL's query parameters.
 
     .. note::
 
@@ -763,12 +772,12 @@ class AuthorizationCodeAuth(ExchangeCodeAuth):
         the authorization code.
     device_id: Optional[:class:`str`]
         A 32 char hex string representing your device.
-    ios_token: Optional[:class:`str`]
-        The ios token to use with authentication. You should generally
-        not need to set this manually.
-    fortnite_token: Optional[:class:`str`]
-        The fortnite token to use with authentication. You should generally
-        not need to set this manually.
+    ios_token: :class:`str`
+        The explicit OAuth basic token used for the initial authentication.
+    fortnite_token: :class:`str`
+        The explicit OAuth basic token used for the Fortnite session.
+    launcher_token: :class:`str`
+        The explicit OAuth basic token used for the EAS presence/chat session.
     """
     def __init__(self, code: StrOrMaybeCoro,
                  **kwargs: Any) -> None:
@@ -818,12 +827,12 @@ class DeviceAuth(Auth):
         The account's id.
     secret: :class:`str`
         The secret.
-    ios_token: Optional[:class:`str`]
-        The ios token to use with authentication. You should generally
-        not need to set this manually.
-    fortnite_token: Optional[:class:`str`]
-        The fortnite token to use with authentication. You should generally
-        not need to set this manually.
+    ios_token: :class:`str`
+        The explicit OAuth basic token used for the initial authentication.
+    fortnite_token: :class:`str`
+        The explicit OAuth basic token used for the Fortnite session.
+    launcher_token: :class:`str`
+        The explicit OAuth basic token used for the EAS presence/chat session.
     """
     def __init__(self, device_id: str,
                  account_id: str,
@@ -923,6 +932,12 @@ class RefreshTokenAuth(Auth):
     ----------
     refresh_token: :class:`str`
         A valid launcher refresh token.
+    ios_token: :class:`str`
+        The explicit OAuth basic token used for the initial authentication.
+    fortnite_token: :class:`str`
+        The explicit OAuth basic token used for the Fortnite session.
+    launcher_token: :class:`str`
+        The explicit OAuth basic token used for the EAS presence/chat session.
     """
     def __init__(self, refresh_token: str,
                  **kwargs: Any) -> None:
@@ -1040,12 +1055,12 @@ class AdvancedAuth(Auth):
     delete_existing_device_auths: :class:`bool`
         Whether or not to delete all existing device auths when a new
         is created.
-    ios_token: Optional[:class:`str`]
-        The ios token to use with authentication. You should generally
-        not need to set this manually.
-    fortnite_token: Optional[:class:`str`]
-        The fortnite token to use with authentication. You should generally
-        not need to set this manually.
+    ios_token: :class:`str`
+        The explicit OAuth basic token used for the initial authentication.
+    fortnite_token: :class:`str`
+        The explicit OAuth basic token used for the Fortnite session.
+    launcher_token: :class:`str`
+        The explicit OAuth basic token used for the EAS presence/chat session.
     """
     def __init__(self, email: Optional[str] = None,
                  password: Optional[str] = None,
