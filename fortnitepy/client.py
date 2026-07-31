@@ -1028,11 +1028,12 @@ class Client:
         await self.xmpp.run()
         log.debug('Connected to XMPP')
 
-        try:
-            await self.websocket.run()
-            log.debug('Started EOS STOMP websocket')
-        except Exception:
-            log.exception('Failed to start EOS STOMP websocket')
+        if self.auth.eas_enabled:
+            try:
+                await self.websocket.run()
+                log.debug('Started EOS STOMP websocket')
+            except Exception:
+                log.exception('Failed to start EOS STOMP websocket')
 
         await self.initialize_party(priority=priority)
         log.debug('Party created')

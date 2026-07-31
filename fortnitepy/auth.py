@@ -91,25 +91,33 @@ class Auth:
         return None
 
     def __init__(self, **kwargs: Any) -> None:
-        token_names = ('ios_token', 'fortnite_token', 'launcher_token')
+        token_names = ('ios_token', 'fortnite_token')
         missing = [
             name for name in token_names
             if not isinstance(kwargs.get(name), str)
             or not kwargs[name].strip()
         ]
+        if 'launcher_token' not in kwargs:
+            missing.append('launcher_token')
+        elif (kwargs['launcher_token'] is not None
+              and (not isinstance(kwargs['launcher_token'], str)
+                   or not kwargs['launcher_token'].strip())):
+            missing.append('launcher_token')
         if missing:
             raise ValueError(
-                'Explicit OAuth client tokens are required: {0}'.format(
+                'Explicit OAuth client configuration is required: {0}'.format(
                     ', '.join(missing)
                 )
             )
 
         # Never silently fall back to one of Epic's first-party clients. The
-        # caller owns all three OAuth client choices, including the launcher
-        # client used for the EAS presence/chat bootstrap.
+        # caller owns all three OAuth client choices. Passing None for the
+        # launcher token explicitly disables the optional EAS presence/chat
+        # bootstrap; it must never fall back to a first-party client.
         self.ios_token = kwargs['ios_token']
         self.fortnite_token = kwargs['fortnite_token']
         self.launcher_token = kwargs['launcher_token']
+        self.eas_enabled = self.launcher_token is not None
 
         self.eas_access_token = None
         self.eas_refresh_token = None
@@ -275,6 +283,9 @@ class Auth:
         )
 
     async def _grant_and_update_eas(self, *, priority: int = 0) -> bool:
+        if not self.eas_enabled:
+            return False
+
         try:
             if self.eas_refresh_token is not None:
                 data = await self.grant_eas_refresh_token(
@@ -461,7 +472,7 @@ class Auth:
 
             try:
                 websocket = getattr(self.client, 'websocket', None)
-                if websocket is not None:
+                if self.eas_enabled and websocket is not None:
                     await websocket.restart()
             except Exception:
                 log.exception('Failed to restart STOMP websocket after refresh')
@@ -552,8 +563,9 @@ class EmailAndPasswordAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: :class:`str`
-        The explicit OAuth basic token used for the EAS presence/chat session.
+    launcher_token: Optional[:class:`str`]
+        The explicit OAuth basic token used for the EAS presence/chat session,
+        or ``None`` to disable that optional session.
     """
     def __init__(self, email: str, password: str, *,
                  two_factor_code: Optional[int] = None,
@@ -687,8 +699,9 @@ class ExchangeCodeAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: :class:`str`
-        The explicit OAuth basic token used for the EAS presence/chat session.
+    launcher_token: Optional[:class:`str`]
+        The explicit OAuth basic token used for the EAS presence/chat session,
+        or ``None`` to disable that optional session.
     """
     def __init__(self, code: StrOrMaybeCoro,
                  **kwargs: Any) -> None:
@@ -776,8 +789,9 @@ class AuthorizationCodeAuth(ExchangeCodeAuth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: :class:`str`
-        The explicit OAuth basic token used for the EAS presence/chat session.
+    launcher_token: Optional[:class:`str`]
+        The explicit OAuth basic token used for the EAS presence/chat session,
+        or ``None`` to disable that optional session.
     """
     def __init__(self, code: StrOrMaybeCoro,
                  **kwargs: Any) -> None:
@@ -831,8 +845,9 @@ class DeviceAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: :class:`str`
-        The explicit OAuth basic token used for the EAS presence/chat session.
+    launcher_token: Optional[:class:`str`]
+        The explicit OAuth basic token used for the EAS presence/chat session,
+        or ``None`` to disable that optional session.
     """
     def __init__(self, device_id: str,
                  account_id: str,
@@ -936,8 +951,9 @@ class RefreshTokenAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: :class:`str`
-        The explicit OAuth basic token used for the EAS presence/chat session.
+    launcher_token: Optional[:class:`str`]
+        The explicit OAuth basic token used for the EAS presence/chat session,
+        or ``None`` to disable that optional session.
     """
     def __init__(self, refresh_token: str,
                  **kwargs: Any) -> None:
@@ -1059,8 +1075,9 @@ class AdvancedAuth(Auth):
         The explicit OAuth basic token used for the initial authentication.
     fortnite_token: :class:`str`
         The explicit OAuth basic token used for the Fortnite session.
-    launcher_token: :class:`str`
-        The explicit OAuth basic token used for the EAS presence/chat session.
+    launcher_token: Optional[:class:`str`]
+        The explicit OAuth basic token used for the EAS presence/chat session,
+        or ``None`` to disable that optional session.
     """
     def __init__(self, email: Optional[str] = None,
                  password: Optional[str] = None,
