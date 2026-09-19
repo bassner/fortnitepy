@@ -107,6 +107,8 @@ venv.bak/
 tests/
 exttest/
 test*
+!/tests/
+!/tests/test_regions.py
 __ignore*
 voice.py
 output.txt

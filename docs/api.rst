@@ -96,7 +96,12 @@ Enumerations
 
 .. class:: Region
 
-	An enumeration for all currently available Fortnite regions.
+	An enumeration of Fortnite region identifiers, including legacy values.
+
+	.. attribute:: NORTHAMERICA
+
+		Merged North America matchmaking region (``NA``).
+		This does not select a subregion.
 
 	.. attribute:: NAEAST
 
