@@ -114,15 +114,3 @@ class PartyMessage(MessageBase):
     def author(self) -> 'PartyMember':
         """:class:`PartyMember`: The author of a message."""
         return self._author
-
-    async def reply(self, content: str) -> None:
-        """|coro|
-
-        Replies to the message with the given content.
-
-        Parameters
-        ----------
-        content: :class:`str`
-            The content of the message
-        """
-        return await self.party.send(content)
