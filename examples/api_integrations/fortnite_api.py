@@ -88,7 +88,7 @@ class MyClient(fortnitepy.Client):
         if command == '!setoutfit':
             data = await self.fetch_cosmetic('outfit', joined_args)
             if data is None:
-                return await message.reply('Could not find the requested outfit.')
+                return print('Could not find the requested outfit.')
 
             outfit_data = data['data']
             await self.party.me.set_outfit(
@@ -100,7 +100,7 @@ class MyClient(fortnitepy.Client):
         elif command == '!setemote':
             data = await self.fetch_cosmetic('emote', joined_args)
             if data is None:
-                return await message.reply('Could not find the requested emote.')
+                return print('Could not find the requested emote.')
 
             emote_data = data['data']
             await self.party.me.set_emote(

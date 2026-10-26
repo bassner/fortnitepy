@@ -67,7 +67,7 @@ class MyClient(fortnitepy.Client):
             data = await self.fetch_cosmetic_id(joined_args)
             cid = data.get('id')
             if cid is None or data['type'] != 'Outfit':
-                return await message.reply('Could not find the requested outfit.')
+                return print('Could not find the requested outfit.')
 
             await self.party.me.set_outfit(
                 asset=cid
@@ -78,7 +78,7 @@ class MyClient(fortnitepy.Client):
             data = await self.fetch_cosmetic_id(' '.join(args))
             eid = data.get('id')
             if eid is None or data['type'] != 'Emote':
-                return await message.reply('Could not find the requested emote.')
+                return print('Could not find the requested emote.')
 
             await self.party.me.set_emote(
                 asset=eid,

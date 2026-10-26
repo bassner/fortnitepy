@@ -231,15 +231,17 @@ class Context:
     async def send(self, content: str) -> None:
         """|coro|
 
-        Sends a message to the context destination.
+        Always raises: Epic no longer accepts XMPP chat messages, so
+        commands cannot respond to the context destination.
 
-        Parameters
-        ----------
-        content: :class:`str`
-            The contents of the message.
+        Raises
+        ------
+        NotImplementedError
+            Sending chat messages is not supported.
         """
-        destination = self.get_destination()
-        await destination.send(content)
+        raise NotImplementedError(
+            'Sending chat messages over XMPP is no longer supported.'
+        )
 
     async def send_help(self, *args: list, page: int = 1) -> Any:
         """send_help(entity=<bot>, page=1)
