@@ -26,7 +26,6 @@ SOFTWARE.
 
 import json
 import asyncio
-import aioxmpp
 import re
 import functools
 import datetime
@@ -1861,10 +1860,6 @@ class PartyMemberBase(User):
         """
         return self.ready is ReadyState.READY
 
-    def is_chatbanned(self) -> bool:
-        """:class:`bool`: Whether or not this member is chatbanned."""
-        return self.id in getattr(self.party, '_chatbanned_members', {})
-
     def _update_connection(self, data: Optional[Union[list, dict]]) -> None:
         if data:
             if isinstance(data, list):
@@ -2077,33 +2072,6 @@ class PartyMember(PartyMemberBase):
 
         await self.client.http.party_promote_member(self.party.id, self.id)
 
-    async def chatban(self, reason: Optional[str] = None) -> None:
-        """|coro|
-
-        Bans this member from the party chat. The member can then not send or
-        receive messages but still is a part of the party.
-
-        .. note::
-
-            Chatbanned members are only banned for the current party. Whenever
-            the client joins another party, the banlist will be empty.
-
-        Parameters
-        ----------
-        reason: Optional[:class:`str`]
-            The reason for the member being banned.
-
-        Raises
-        ------
-        Forbidden
-            You are not the leader of the party.
-        ValueError
-            This user is already banned.
-        NotFound
-            The user was not found.
-        """
-        await self.party.chatban_member(self.id, reason=reason)
-
     async def swap_position(self) -> None:
         """|coro|
 
@@ -2289,7 +2257,6 @@ class ClientPartyMember(PartyMemberBase, Patchable):
                 if e.message_code != m:
                     raise
 
-            await self.client.xmpp.leave_muc()
             p = await self.client._create_party(acquire=False)
             return p
 
@@ -3526,7 +3493,6 @@ class ClientParty(PartyBase, Patchable):
     def __init__(self, client: 'Client', data: dict) -> None:
         self.last_raw_status = None
         self._me = None
-        self._chatbanned_members = {}
 
         self.patch_lock = asyncio.Lock()
         self.edit_lock = asyncio.Lock()
@@ -3545,20 +3511,6 @@ class ClientParty(PartyBase, Patchable):
     def me(self) -> 'ClientPartyMember':
         """:class:`ClientPartyMember`: The clients partymember object."""
         return self._me
-
-    @property
-    def muc_jid(self) -> aioxmpp.JID:
-        """:class:`aioxmpp.JID`: The JID of the party MUC."""
-        return aioxmpp.JID.fromstr(
-            'Party-{}@muc.prod.ol.epicgames.com'.format(self.id)
-        )
-
-    @property
-    def chatbanned_members(self) -> None:
-        """Dict[:class:`str`, :class:`PartyMember`] A dict of all chatbanned
-        members mapped to their user id.
-        """
-        return self._chatbanned_members
 
     def _add_clientmember(self, member: Type[ClientPartyMember]) -> None:
         self._me = member
@@ -3720,38 +3672,6 @@ class ClientParty(PartyBase, Patchable):
             member._dummy = True
 
         return result
-
-    async def join_chat(self) -> None:
-        await self.client.xmpp.join_muc(self.id)
-
-    async def chatban_member(self, user_id: str, *,
-                             reason: Optional[str] = None) -> None:
-        if not self.me.leader:
-            raise Forbidden('Only leaders can ban members from the chat.')
-
-        if user_id in self._chatbanned_members:
-            raise ValueError('This member is already banned')
-
-        room = self.client.xmpp.muc_room
-        for occupant in room.members:
-            if occupant.direct_jid.localpart == user_id:
-                self._chatbanned_members[user_id] = self._members[user_id]
-                await room.ban(occupant, reason=reason)
-                break
-        else:
-            raise NotFound('This member is not a part of the party.')
-
-    async def send(self, content: str) -> None:
-        """|coro|
-
-        Sends a message to this party's chat.
-
-        Parameters
-        ----------
-        content: :class:`str`
-            The content of the message.
-        """
-        await self.client.xmpp.send_party_message(content)
 
     async def do_patch(self, updated: Optional[dict] = None,
                        deleted: Optional[list] = None,
@@ -4087,8 +4007,6 @@ class ClientParty(PartyBase, Patchable):
         me = self.me
         if me is not None:
             me._cancel_clear_emote()
-
-        await self.client.xmpp.leave_muc()
 
         try:
             await self.client.http.party_leave(

@@ -2327,7 +2327,7 @@ class Client:
                 try:
                     await client.wait_for('party_member_promote', check=check, timeout=120)
                 except asyncio.TimeoutError:
-                    await member.party.send('You took too long to promote me!')
+                    return
 
                 await member.party.set_custom_key('my_custom_key_123')
 
@@ -3037,8 +3037,6 @@ class Client:
                         if e.message_code != m:
                             raise
 
-                    await self.xmpp.leave_muc()
-
             config = {**cf, **data['config']}
             party = self.construct_party(data)
             await party._update_members(
@@ -3047,9 +3045,7 @@ class Client:
             )
             self.party = party
 
-            tasks = [
-                self.loop.create_task(party.join_chat()),
-            ]
+            tasks = []
             await party.meta.meta_ready_event.wait()
 
             updated, deleted, cfg1 = party.meta.set_privacy(config['privacy'])
@@ -3162,7 +3158,6 @@ class Client:
             party_data = await self.http.party_lookup(party.id)
             party = self.construct_party(party_data)
             self.party = party
-            asyncio.ensure_future(party.join_chat())
             await party._update_members(party_data['members'])
 
         try:
@@ -3322,10 +3317,7 @@ class Client:
         """
         self.platform = platform
 
-        await asyncio.gather(
-            self.auth.run_refresh(),
-            self.wait_for('muc_enter'),
-        )
+        await self.auth.run_refresh()
 
     def set_avatar(self, avatar: Avatar) -> None:
         """Sets the client's avatar and updates it for all friends.
