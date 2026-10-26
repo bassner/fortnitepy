@@ -82,18 +82,6 @@ class FriendMessage(MessageBase):
         return ('<FriendMessage author={0.author!r} '
                 'created_at={0.created_at!r}>'.format(self))
 
-    async def reply(self, content: str) -> None:
-        """|coro|
-
-        Replies to the message with the given content.
-
-        Parameters
-        ----------
-        content: :class:`str`
-            The content of the message
-        """
-        return await self.author.send(content)
-
 
 class PartyMessage(MessageBase):
 

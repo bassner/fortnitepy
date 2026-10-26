@@ -1624,18 +1624,6 @@ class XMPPClient:
         # let loop run one iteration for events to be dispatched
         await asyncio.sleep(0)
 
-    async def send_friend_message(self, jid: aioxmpp.JID,
-                                  content: str) -> None:
-        if self.stream is None:
-            raise XMPPError('xmpp is not connected')
-
-        msg = aioxmpp.Message(
-            to=jid,
-            type_=aioxmpp.MessageType.CHAT,
-        )
-        msg.body[None] = content
-        await self.stream.send(msg)
-
     def set_presence(self, *,
                      status: Optional[Union[str, dict]] = None,
                      show: Optional[str]) -> None:

@@ -396,18 +396,6 @@ class Friend(FriendBase):
         """
         await self.client.remove_or_decline_friend(self.id)
 
-    async def send(self, content: str) -> None:
-        """|coro|
-
-        Sends a :class:`FriendMessage` to this friend.
-
-        Parameters
-        ----------
-        content: :class:`str`
-            The content of the message.
-        """
-        await self.client.xmpp.send_friend_message(self.jid, content)
-
     async def join_party(self) -> 'ClientParty':
         """|coro|
 

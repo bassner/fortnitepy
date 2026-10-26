@@ -610,8 +610,7 @@ class HelpCommand:
             The error message to display to the user.
         """
 
-        destination = self.get_destination()
-        await destination.send(error)
+        await self.context.send(error)
 
     @_not_overridden
     async def help_command_error_handler(self, ctx: Context,
@@ -1335,9 +1334,8 @@ class FortniteHelpCommand(HelpCommand):
         the destination.
         """
 
-        destination = self.get_destination()
         for page in self.paginator.pages:
-            await destination.send(page)
+            await self.context.send(page)
 
     async def send_page(self, page_num: int) -> None:
         """A helper utility to send a page output from :attr:`paginator` to
@@ -1350,8 +1348,7 @@ class FortniteHelpCommand(HelpCommand):
                 'Could not find the page you were looking for'
             )
 
-        destination = self.get_destination()
-        await destination.send(pages[page_num-1])
+        await self.context.send(pages[page_num-1])
 
     def get_destination(self) -> Union[Friend, ClientParty]:
         ctx = self.context

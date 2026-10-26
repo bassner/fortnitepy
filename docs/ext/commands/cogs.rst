@@ -31,8 +31,7 @@ This example cog defines a ``Greetings`` category for your commands, with a sing
 
         @commands.Cog.event()
         async def event_party_member_join(self, member):
-            party = member.party
-            await party.send('Welcome {0.display_name}.'.format(member))
+            print('Welcome {0.display_name}.'.format(member))
 
         @commands.command()
         async def hello(self, ctx, *, member: fortnitepy.Member = None):
