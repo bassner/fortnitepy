@@ -65,7 +65,7 @@ class MyBot(commands.Bot):
 
     async def event_friend_message(self, message):
         print('Received message from {0.author.display_name} | Content: "{0.content}"'.format(message))
-        await message.reply('Thanks for your message!')
+        print('Received a message from {0.author.display_name}'.format(message))
 
     @commands.command()
     async def hello(self, ctx):
