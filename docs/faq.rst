@@ -79,24 +79,11 @@ The clients current party member object can be accessed through :attr:`ClientPar
 Example usage: ``await client.party.me.set_emote('EID_Floss')``
 
 
-How can I send a DM?
-~~~~~~~~~~~~~~~~~~~~
+Can I send a DM?
+~~~~~~~~~~~~~~~~
 
-To send a DM you first need the :class:`Friend` object of the friend you
-want to send the dm to and then use :meth:`Friend.send()`. Example: ::
-
-    friend = client.get_friend('7e9f8dd37a924496bc5083733887b44c')
-    await friend.send('Hello friend!')
-
-If you want to respond to a friend message in :func:`event_friend_message()`, you
-can do this by using :meth:`FriendMessage.reply()`. Example: ::
-
-    @client.event
-    async def event_friend_message(message):
-        await message.reply('Thanks for the message!')
-
-        # Not as clean but would still work:
-        await message.author.send('Thanks for the message!')
+No. Epic rejects all chat messages sent over XMPP, so this fork no longer
+sends DMs or party messages.
 
 
 How can I set a status?
