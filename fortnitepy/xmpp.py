@@ -38,8 +38,8 @@ from xml.etree import ElementTree
 from collections import defaultdict
 from typing import TYPE_CHECKING, Optional, Union, Awaitable, Any, Tuple
 
-from .errors import XMPPError, PartyError, HTTPException
-from .message import FriendMessage, PartyMessage
+from .errors import XMPPError, HTTPException
+from .message import FriendMessage
 from .party import (Party, PartyJoinRequest, ReceivedPartyInvitation,
                     PartyJoinConfirmation)
 from .presence import Presence
@@ -599,7 +599,6 @@ class XMPPClient:
 
         self.xmpp_client = None
         self.stream = None
-        self.muc_room = None
 
         self._ping_task = None
         self._is_suspended = False
@@ -952,19 +951,6 @@ class XMPPClient:
             if party.me.leader and not yielding:
                 fut = asyncio.ensure_future(party.refresh_squad_assignments())
 
-        try:
-            if member.id == self.client.user.id:
-                await self.client.wait_for('muc_enter', timeout=2)
-            else:
-                def check(m):
-                    return m.direct_jid.localpart == member.id
-
-                await self.client.wait_for('muc_member_join',
-                                           check=check,
-                                           timeout=2)
-        except asyncio.TimeoutError:
-            pass
-
         if fut is not None:
             await fut
 
@@ -1036,7 +1022,6 @@ class XMPPClient:
             await party.refresh_squad_assignments()
 
         if member.id == self.client.user.id:
-            await self.leave_muc()
             p = await self.client._create_party()
 
             self.client.party = p
@@ -1605,7 +1590,6 @@ class XMPPClient:
         )
         self.xmpp_client.backoff_start = datetime.timedelta(seconds=0.1)
 
-        self.muc_service = self.xmpp_client.summon(aioxmpp.MUCClient)
         self.setup_callbacks()
 
         future = self.client.loop.create_future()
@@ -1630,99 +1614,10 @@ class XMPPClient:
         self._ping_task = None
         self.xmpp_client = None
         self.stream = None
-        self.muc_service = None
         log.debug('Successfully closed xmpp client')
 
         # let loop run one iteration for events to be dispatched
         await asyncio.sleep(0)
-
-    def muc_on_message(self, message: aioxmpp.Message,
-                       member: aioxmpp.muc.Occupant,
-                       source: aioxmpp.im.dispatcher.MessageSource,
-                       **kwargs: Any) -> None:
-        if member.direct_jid is None:
-            return
-
-        user_id = member.direct_jid.localpart
-        party = self.client.party
-
-        if (user_id == self.client.user.id or member.nick is None
-                or user_id not in party._members):
-            return
-
-        self.client.dispatch_event('party_message', PartyMessage(
-            client=self.client,
-            party=party,
-            author=party._members[member.direct_jid.localpart],
-            content=message.body.any()
-        ))
-
-    def muc_on_member_join(self, member: aioxmpp.muc.Occupant) -> None:
-        self.client.dispatch_event('muc_member_join', member)
-
-    def muc_on_enter(self, *args: list, **kwargs: Any) -> None:
-        self.client.dispatch_event('muc_enter')
-
-    def muc_on_leave(self, member: aioxmpp.muc.Occupant,
-                     muc_leave_mode: aioxmpp.muc.LeaveMode,
-                     muc_actor: aioxmpp.muc.xso.UserActor,
-                     muc_reason: str,
-                     **kwargs: Any) -> None:
-        if muc_leave_mode is aioxmpp.muc.LeaveMode.BANNED:
-            mem = self.client.party._members[member.direct_jid.localpart]
-            self.client.dispatch_event('party_member_chatban',
-                                       mem,
-                                       muc_reason)
-
-    async def join_muc(self, party_id: str) -> None:
-        muc_jid = aioxmpp.JID.fromstr(
-            'Party-{}@muc.prod.ol.epicgames.com'.format(party_id)
-        )
-        nick = '{0}:{1}:{2}'.format(
-            self._remove_illegal_characters(self.client.user.display_name),
-            self.client.user.id,
-            self.xmpp_client.local_jid.resource
-        )
-
-        room, _ = self.muc_service.join(
-            muc_jid,
-            nick
-        )
-
-        room.on_message.connect(self.muc_on_message)
-        room.on_join.connect(self.muc_on_member_join)
-        room.on_enter.connect(self.muc_on_enter)
-        room.on_leave.connect(self.muc_on_leave)
-        self.muc_room = room
-
-        await self.client.wait_for('muc_enter')
-
-    async def leave_muc(self) -> None:
-
-        # come back to this. works sometimes? wait for 2 seconds and timeout
-        # to manually leave + check if muc messages is sent from correct
-        # room (party-id)
-
-        if self.muc_room is not None:
-            presence = aioxmpp.stanza.Presence(
-                type_=aioxmpp.structs.PresenceType.UNAVAILABLE,
-                to=self.muc_room._mucjid
-            )
-            await self.xmpp_client.send(presence)
-            try:
-                self.muc_service._muc_exited(self.muc_room)
-            except KeyError:
-                pass
-
-    async def send_party_message(self, content: str) -> None:
-        if self.muc_room is None:
-            raise PartyError('Can\'t send message. Reason: No party found')
-
-        msg = aioxmpp.Message(
-            type_=aioxmpp.MessageType.GROUPCHAT
-        )
-        msg.body[None] = content
-        self.muc_room.send_message(msg)
 
     async def send_friend_message(self, jid: aioxmpp.JID,
                                   content: str) -> None:
